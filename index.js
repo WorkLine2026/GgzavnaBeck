@@ -9,22 +9,24 @@ const parcelRoutes = require('./routes/parcel.routes');
 
 const app = express();
 
-// ✅ ნებადართული დომენების სია (Localhost + Vercel)
+// ✅ ნებადართული origin-ების სია
 const allowedOrigins = [
   'http://localhost:4200',
   'https://gadazidva.vercel.app'
 ];
 
-// ✅ CORS Config
+// ✅ უსაფრთხო და მარტივი CORS კონფიგურაცია
 app.use(cors({
   origin: function (origin, callback) {
-    // უშვებს მოთხოვნებს origin-ის გარეშეც (მაგალითად Postman, mobile apps)
+    // უშვებს მოთხოვნებს origin-ის გარეშე (Postman, Mobile apps)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'CORS პოლიტიკა არ უშვებს წვდომას ამ Origin-იდან: ' + origin;
-      return callback(new Error(msg), false);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      // Error-ის სროლის ნაცვლად გავატანოთ false (რომ სერვერმა 500 ერორი არ დააბრუნოს)
+      return callback(null, false);
     }
-    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
