@@ -25,7 +25,7 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     } else {
-      // Error-ის სროლის ნაცვლად გავატანოთ false (რომ სერვერმა 500 ერორი არ დააბრუნოს)
+      // Error-ის სროლის ნაცვლად გავატანოთ false
       return callback(null, false);
     }
   },
@@ -52,7 +52,8 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected...'))
   .catch(err => console.log('❌ MongoDB Error:', err));
 
+// ✅ PORT binding - 0.0.0.0 აუცილებელია Render-ზე
 const PORT = process.env.PORT || 3000;
-app.listen('https://ggzavnabeck.onrender.com',PORT,  () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 });
