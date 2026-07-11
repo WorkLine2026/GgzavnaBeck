@@ -52,6 +52,6 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.log('❌ MongoDB Error:', err));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen('https://ggzavnabeck.onrender.com',PORT,  () => {
   console.log(`🚀 Server is running on port ${PORT}`);
 });
