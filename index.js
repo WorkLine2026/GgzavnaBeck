@@ -9,9 +9,23 @@ const parcelRoutes = require('./routes/parcel.routes');
 
 const app = express();
 
-// ✅ CORS - პირველი middleware!
+// ✅ ნებადართული დომენების სია (Localhost + Vercel)
+const allowedOrigins = [
+  'http://localhost:4200',
+  'https://gadazidva.vercel.app'
+];
+
+// ✅ CORS Config
 app.use(cors({
-  origin: 'http://localhost:4200',
+  origin: function (origin, callback) {
+    // უშვებს მოთხოვნებს origin-ის გარეშეც (მაგალითად Postman, mobile apps)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'CORS პოლიტიკა არ უშვებს წვდომას ამ Origin-იდან: ' + origin;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
