@@ -12,7 +12,8 @@ const app = express();
 // ✅ ნებადართული origin-ების სია
 const allowedOrigins = [
   'http://localhost:4200',
-  'https://gadazidva.vercel.app'
+  'https://gadazidva.vercel.app',
+  'https://ggzavna-frontend.vercel.app' 
 ];
 
 // ✅ უსაფრთხო და მარტივი CORS კონფიგურაცია
