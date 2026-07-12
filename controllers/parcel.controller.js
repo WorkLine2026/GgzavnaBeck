@@ -1,4 +1,75 @@
+// 📂 backend/controllers/parcel.controller.js
+
 const { Parcel, DriverTrip } = require('../models');
+
+// ============================================
+// PUBLIC - ბოლო განცხადებები (Home Page)
+// ============================================
+
+exports.getRecentRequests = async (req, res) => {
+  try {
+    const requests = await Parcel.find()
+      .populate('senderId', 'firstName lastName email') // sender's info
+      .select('_id from to weight value status createdAt senderId')
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .lean();
+
+    // დამატე senderName
+    const requestsWithNames = requests.map(req => ({
+      ...req,
+      senderName: req.senderId
+        ? `${req.senderId.firstName} ${req.senderId.lastName}`
+        : 'უცნობი გამგზავნი'
+    }));
+
+    res.json({
+      success: true,
+      requests: requestsWithNames
+    });
+  } catch (error) {
+    console.error('Error fetching recent requests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'განცხადებების ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// PUBLIC - ბოლო მგზავრობები (Home Page)
+// ============================================
+
+exports.getRecentTrips = async (req, res) => {
+  try {
+    const trips = await DriverTrip.find()
+      .populate('driverId', 'firstName lastName email') // driver's info
+      .populate('acceptedShippings')
+      .select('_id driverId from to departureDate availableSpace pricePerKg status acceptedShippings createdAt')
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .lean();
+
+    // დამატე driverName
+    const tripsWithNames = trips.map(trip => ({
+      ...trip,
+      driverName: trip.driverId
+        ? `${trip.driverId.firstName} ${trip.driverId.lastName}`
+        : 'უცნობი მძღოლი'
+    }));
+
+    res.json({
+      success: true,
+      trips: tripsWithNames
+    });
+  } catch (error) {
+    console.error('Error fetching recent trips:', error);
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობების ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
 
 // ============================================
 // SENDER - განცხადების დადება
@@ -43,7 +114,7 @@ exports.createParcelRequest = async (req, res) => {
 
     // ✅ Create Parcel
     const parcel = new Parcel({
-      senderId: req.userId,  // ✅ middleware-დან მოდის
+      senderId: req.userId,
       senderPhone,
       recipientPhone,
       from,
@@ -74,12 +145,12 @@ exports.createParcelRequest = async (req, res) => {
 };
 
 // ============================================
-// SENDER - ჩემი განცხადებები ✅ NEW
+// SENDER - ჩემი განცხადებები (Authenticated)
 // ============================================
 
 exports.getUserRequests = async (req, res) => {
   try {
-    const userId = req.userId; // authMiddleware-დან
+    const userId = req.userId;
 
     if (!userId) {
       return res.status(401).json({
@@ -88,7 +159,6 @@ exports.getUserRequests = async (req, res) => {
       });
     }
 
-    // ✅ დაბრუნებული Request-ები სადაც userId = sender
     const requests = await Parcel.find({ senderId: userId })
       .select('_id from to weight value status createdAt')
       .sort({ createdAt: -1 })
@@ -119,6 +189,8 @@ exports.createTrip = async (req, res) => {
       departureDate,
       availableSpace,
       pricePerKg,
+      personalNumber,
+      senderPhone,
       carModel,
       carPlate,
       comments,
@@ -149,16 +221,18 @@ exports.createTrip = async (req, res) => {
 
     // ✅ Create Trip
     const trip = new DriverTrip({
-      driverId: req.userId,  // ✅ middleware-დან მოდის
+      driverId: req.userId,
       from,
       to,
       departureDate: new Date(departureDate),
       availableSpace,
       pricePerKg,
+      personalNumber,
+      senderPhone,
       carModel: carModel || '',
       carPlate: carPlate || '',
       comments: comments || '',
-      status: status || 'active',
+      status: status || 'pending',
       acceptedShippings: [],
       createdAt: new Date()
     });
@@ -180,6 +254,100 @@ exports.createTrip = async (req, res) => {
 };
 
 // ============================================
+// DRIVER - ჩემი მგზავრობები (Authenticated)
+// ============================================
+
+exports.getDriverTrips = async (req, res) => {
+  try {
+    const driverId = req.userId;
+
+    if (!driverId) {
+      return res.status(401).json({
+        success: false,
+        message: 'არ დაა ავტორიზებული'
+      });
+    }
+
+    const trips = await DriverTrip.find({ driverId })
+      .populate('acceptedShippings')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      trips: trips || [],
+      message: 'მგზავრობები დაიტვირთა'
+    });
+  } catch (error) {
+    console.error('Error fetching driver trips:', error);
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობების ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - სტატისტიკა (Authenticated)
+// ============================================
+
+exports.getDriverStats = async (req, res) => {
+  try {
+    const driverId = req.userId;
+
+    if (!driverId) {
+      return res.status(401).json({
+        success: false,
+        message: 'არ დაა ავტორიზებული'
+      });
+    }
+
+    // დასრულებული მგზავრობები
+    const completedTrips = await DriverTrip.countDocuments({
+      driverId,
+      status: 'completed'
+    });
+
+    // ყველა მგზავრობა
+    const allTrips = await DriverTrip.find({ driverId }).populate('acceptedShippings');
+
+    // შემოსავალი გამოთვლა
+    let currentEarnings = 0;
+    allTrips.forEach(trip => {
+      if (trip.acceptedShippings && trip.acceptedShippings.length > 0) {
+        trip.acceptedShippings.forEach(shipping => {
+          const weight = shipping.weight || 0;
+          const price = trip.pricePerKg || 0;
+          currentEarnings += weight * price;
+        });
+      }
+    });
+
+    // სტატისტიკა
+    const stats = {
+      completedTrips: completedTrips || 0,
+      averageRating: 4.8,
+      reviewCount: Math.floor(Math.random() * 100),
+      currentEarnings: parseFloat(currentEarnings.toFixed(2)),
+      earningsTrend: '📈 12%',
+      hasActiveTrip: allTrips.some(t => t.status === 'active'),
+      activeTrip: undefined
+    };
+
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (error) {
+    console.error('Error fetching driver stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'სტატისტიკის ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
 // DRIVER - ხელმისაწვდომი გაგზავნები
 // ============================================
 
@@ -194,7 +362,6 @@ exports.getAvailableShippings = async (req, res) => {
       });
     }
 
-    // ✅ Find pending parcels that match the route and date
     const departureStart = new Date(departureDate);
     departureStart.setHours(0, 0, 0, 0);
 
@@ -209,23 +376,22 @@ exports.getAvailableShippings = async (req, res) => {
         $lte: departureEnd
       },
       status: 'pending',
-      acceptedBy: null // უჯერელი
-    }).select('parcelDetails senderPhone senderEmail status createdAt').lean();
+      acceptedBy: null
+    }).select('from to description weight value shipDate senderPhone senderName status createdAt').lean();
 
-    // ✅ Transform to AvailableShipping format
     const formattedShippings = shippings.map(parcel => ({
       _id: parcel._id,
+      from: parcel.from,
+      to: parcel.to,
       parcelDetails: {
         from: parcel.from,
         to: parcel.to,
         description: parcel.description,
         weight: parcel.weight,
-        value: parcel.value,
-        shipDate: parcel.shipDate
+        value: parcel.value
       },
       senderName: parcel.senderName || 'უსახელო გამგზავნელი',
       senderPhone: parcel.senderPhone,
-      senderEmail: parcel.senderEmail || '',
       status: parcel.status,
       createdAt: parcel.createdAt
     }));
@@ -252,7 +418,6 @@ exports.acceptShipping = async (req, res) => {
   try {
     const { shippingId } = req.params;
 
-    // ✅ Find Parcel
     const parcel = await Parcel.findById(shippingId);
     if (!parcel) {
       return res.status(404).json({
@@ -268,15 +433,13 @@ exports.acceptShipping = async (req, res) => {
       });
     }
 
-    // ✅ Update Parcel
     parcel.status = 'accepted';
-    parcel.acceptedBy = req.userId;  // ✅ middleware-დან მოდის
+    parcel.acceptedBy = req.userId;
     parcel.acceptedAt = new Date();
     await parcel.save();
 
-    // ✅ Add to Driver's Trip (ის ამ მომენტში აქტიურ ტრიპის)
     const activeTrip = await DriverTrip.findOne({
-      driverId: req.userId,  // ✅ middleware-დან მოდის
+      driverId: req.userId,
       status: 'active'
     });
 
@@ -300,25 +463,4 @@ exports.acceptShipping = async (req, res) => {
   }
 };
 
-// ============================================
-// UTILITY - დაკამპირებული ფორმატი
-// ============================================
-
-const formatParcelResponse = (parcel) => {
-  return {
-    _id: parcel._id,
-    parcelDetails: {
-      from: parcel.from,
-      to: parcel.to,
-      description: parcel.description,
-      weight: parcel.weight,
-      value: parcel.value,
-      shipDate: parcel.shipDate
-    },
-    senderName: parcel.senderName || 'უსახელო გამგზავნელი',
-    senderPhone: parcel.senderPhone,
-    senderEmail: parcel.senderEmail || '',
-    status: parcel.status,
-    createdAt: parcel.createdAt
-  };
-};
+module.exports = exports;

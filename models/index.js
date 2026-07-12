@@ -1,3 +1,5 @@
+// 📂 backend/models/index.js
+
 const mongoose = require('mongoose');
 
 // ============================================
@@ -9,11 +11,20 @@ const ParcelSchema = new mongoose.Schema({
   senderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
+  },
+  senderName: {
+    type: String,
+    default: 'უსახელო გამგზავნელი'
   },
   senderPhone: {
     type: String,
     required: true
+  },
+  senderEmail: {
+    type: String,
+    default: ''
   },
 
   // Recipient Info
@@ -25,15 +36,18 @@ const ParcelSchema = new mongoose.Schema({
   // Parcel Details
   from: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   to: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   shipDate: {
     type: Date,
-    required: true
+    required: true,
+    index: true
   },
   description: {
     type: String,
@@ -60,7 +74,8 @@ const ParcelSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['pending', 'accepted', 'in-transit', 'delivered', 'cancelled'],
-    default: 'pending'
+    default: 'pending',
+    index: true
   },
 
   // Driver Info (ერთხელ მძღოლმა მიიღო)
@@ -78,7 +93,8 @@ const ParcelSchema = new mongoose.Schema({
   // Timestamps
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true
   },
   acceptedAt: {
     type: Date,
@@ -88,6 +104,9 @@ const ParcelSchema = new mongoose.Schema({
     type: Date,
     default: null
   }
+}, {
+  collection: 'parcels',
+  timestamps: false
 });
 
 // ============================================
@@ -99,21 +118,25 @@ const DriverTripSchema = new mongoose.Schema({
   driverId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
   },
 
   // Trip Details
   from: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   to: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   departureDate: {
     type: Date,
-    required: true
+    required: true,
+    index: true
   },
 
   // Capacity
@@ -127,6 +150,16 @@ const DriverTripSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 0.1
+  },
+
+  // Driver Contact
+  personalNumber: {
+    type: String,
+    default: ''
+  },
+  senderPhone: {
+    type: String,
+    default: ''
   },
 
   // Vehicle Info
@@ -146,8 +179,9 @@ const DriverTripSchema = new mongoose.Schema({
   // Trip Status
   status: {
     type: String,
-    enum: ['active', 'in-progress', 'completed', 'cancelled'],
-    default: 'active'
+    enum: ['pending', 'active', 'in-progress', 'completed', 'cancelled'],
+    default: 'pending',
+    index: true
   },
 
   // Accepted Shippings
@@ -159,7 +193,8 @@ const DriverTripSchema = new mongoose.Schema({
   // Timestamps
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true
   },
   startedAt: {
     type: Date,
@@ -169,7 +204,22 @@ const DriverTripSchema = new mongoose.Schema({
     type: Date,
     default: null
   }
+}, {
+  collection: 'driver_trips',
+  timestamps: false
 });
+
+// ============================================
+// INDEXES (Performance Optimization)
+// ============================================
+
+ParcelSchema.index({ senderId: 1, status: 1 });
+ParcelSchema.index({ from: 1, to: 1, shipDate: 1 });
+ParcelSchema.index({ status: 1, createdAt: -1 }); // for public recent requests
+
+DriverTripSchema.index({ driverId: 1, status: 1 });
+DriverTripSchema.index({ from: 1, to: 1, departureDate: 1 });
+DriverTripSchema.index({ status: 1, createdAt: -1 }); // for public recent trips
 
 // ============================================
 // EXPORTS
