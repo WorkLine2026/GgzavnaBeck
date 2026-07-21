@@ -9,17 +9,16 @@ const { Parcel, DriverTrip } = require('../models');
 exports.getRecentRequests = async (req, res) => {
   try {
     const requests = await Parcel.find()
-      .populate('senderId', 'firstName lastName email') // sender's info
+      .populate('senderId', 'firstName lastName email')
       .select('_id from to weight value status createdAt senderId')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean();
 
-    // დამატე senderName
-    const requestsWithNames = requests.map(req => ({
-      ...req,
-      senderName: req.senderId
-        ? `${req.senderId.firstName} ${req.senderId.lastName}`
+    const requestsWithNames = requests.map(r => ({
+      ...r,
+      senderName: r.senderId
+        ? `${r.senderId.firstName} ${r.senderId.lastName}`
         : 'უცნობი გამგზავნი'
     }));
 
@@ -43,14 +42,13 @@ exports.getRecentRequests = async (req, res) => {
 exports.getRecentTrips = async (req, res) => {
   try {
     const trips = await DriverTrip.find()
-      .populate('driverId', 'firstName lastName email') // driver's info
+      .populate('driverId', 'firstName lastName email')
       .populate('acceptedShippings')
       .select('_id driverId from to departureDate availableSpace pricePerKg status acceptedShippings createdAt')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean();
 
-    // დამატე driverName
     const tripsWithNames = trips.map(trip => ({
       ...trip,
       driverName: trip.driverId
@@ -90,7 +88,6 @@ exports.createParcelRequest = async (req, res) => {
       status
     } = req.body;
 
-    // ✅ Validation
     if (!from || !to || from === to) {
       return res.status(400).json({
         success: false,
@@ -112,7 +109,6 @@ exports.createParcelRequest = async (req, res) => {
       });
     }
 
-    // ✅ Create Parcel
     const parcel = new Parcel({
       senderId: req.userId,
       senderPhone,
@@ -133,7 +129,8 @@ exports.createParcelRequest = async (req, res) => {
     res.status(201).json({
       success: true,
       requestId: parcel._id,
-      message: 'განცხადება წარმატებით დაიქვიათ!'
+      data: parcel,
+      message: 'განცხადება წარმატებით დაიდო!'
     });
   } catch (error) {
     console.error('Error creating parcel request:', error);
@@ -155,7 +152,7 @@ exports.getUserRequests = async (req, res) => {
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: 'არ დაა ავტორიზებული'
+        message: 'არ ხართ ავტორიზებული'
       });
     }
 
@@ -173,6 +170,159 @@ exports.getUserRequests = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'განცხადებების ჩატვირთვა წარუმატებელი'
+    });
+  }
+};
+
+// ============================================
+// PUBLIC/SENDER - ერთი კონკრეტული განცხადების ნახვა (ID-ით)
+// ============================================
+
+exports.getParcelRequestById = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+
+    const parcel = await Parcel.findById(requestId)
+      .populate('senderId', 'firstName lastName')
+      .lean();
+
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+
+    const data = {
+      ...parcel,
+      senderName: parcel.senderId
+        ? `${parcel.senderId.firstName} ${parcel.senderId.lastName}`
+        : parcel.senderName || 'უცნობი გამგზავნი'
+    };
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    console.error('Error fetching parcel request by id:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'განცხადების ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// SENDER - სტატუსის განახლება (მხოლოდ sender-მა)
+// ============================================
+
+exports.updateParcelStatus = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { status } = req.body;
+
+    const allowedStatuses = ['pending', 'accepted', 'in-transit', 'delivered', 'cancelled'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'სტატუსი ვალიდური არ არის'
+      });
+    }
+
+    const parcel = await Parcel.findById(requestId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+
+    if (parcel.senderId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ განცხადების რედაქტირების უფლება'
+      });
+    }
+
+    parcel.status = status;
+    if (status === 'delivered') {
+      parcel.deliveredAt = new Date();
+    }
+    await parcel.save();
+
+    res.json({
+      success: true,
+      data: parcel,
+      message: 'სტატუსი წარმატებით განახლდა'
+    });
+  } catch (error) {
+    console.error('Error updating parcel status:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'სტატუსის განახლება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// SENDER - განცხადების ხელახლა გამოქვეყნება
+// ============================================
+
+exports.republishRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+
+    const parcel = await Parcel.findById(requestId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+
+    if (parcel.senderId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ განცხადების რედაქტირების უფლება'
+      });
+    }
+
+    parcel.status = 'pending';
+    parcel.acceptedBy = null;
+    parcel.acceptedTrip = null;
+    parcel.acceptedAt = null;
+    parcel.createdAt = new Date();
+    await parcel.save();
+
+    res.json({
+      success: true,
+      data: parcel,
+      message: 'განცხადება წარმატებით გამოქვეყნდა'
+    });
+  } catch (error) {
+    console.error('Error republishing request:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'ხელახლა გამოქვეყნება ვერ მოხერხდა'
     });
   }
 };
@@ -197,7 +347,6 @@ exports.createTrip = async (req, res) => {
       status
     } = req.body;
 
-    // ✅ Validation
     if (!from || !to || from === to) {
       return res.status(400).json({
         success: false,
@@ -219,7 +368,6 @@ exports.createTrip = async (req, res) => {
       });
     }
 
-    // ✅ Create Trip
     const trip = new DriverTrip({
       driverId: req.userId,
       from,
@@ -242,13 +390,14 @@ exports.createTrip = async (req, res) => {
     res.status(201).json({
       success: true,
       tripId: trip._id,
-      message: 'მგზავრობა წარმატებით განათავსდა!'
+      data: trip,
+      message: 'მგზავრობა წარმატებით განთავსდა!'
     });
   } catch (error) {
     console.error('Error creating trip:', error);
     res.status(500).json({
       success: false,
-      message: 'მგზავრობა ვერ განათავსდა'
+      message: 'მგზავრობა ვერ განთავსდა'
     });
   }
 };
@@ -264,7 +413,7 @@ exports.getDriverTrips = async (req, res) => {
     if (!driverId) {
       return res.status(401).json({
         success: false,
-        message: 'არ დაა ავტორიზებული'
+        message: 'არ ხართ ავტორიზებული'
       });
     }
 
@@ -288,6 +437,205 @@ exports.getDriverTrips = async (req, res) => {
 };
 
 // ============================================
+// DRIVER - კონკრეტული ტრიპის ნახვა (მხოლოდ მისი)
+// ============================================
+
+exports.getTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await DriverTrip.findById(tripId)
+      .populate('acceptedShippings')
+      .populate('driverId', 'firstName lastName')
+      .lean();
+
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    if (trip.driverId && trip.driverId._id.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ მგზავრობის ნახვის უფლება'
+      });
+    }
+
+    const data = {
+      ...trip,
+      driverName: trip.driverId
+        ? `${trip.driverId.firstName} ${trip.driverId.lastName}`
+        : 'უცნობი მძღოლი'
+    };
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    console.error('Error fetching trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - ტრიპის განახლება
+// ============================================
+
+exports.updateTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const updates = req.body || {};
+
+    const trip = await DriverTrip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    if (trip.driverId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ მგზავრობის რედაქტირების უფლება'
+      });
+    }
+
+    // ✅ დაცული ველები, რომლების პირდაპირ overwrite არ შეიძლება
+    delete updates.driverId;
+    delete updates._id;
+    delete updates.acceptedShippings;
+    delete updates.createdAt;
+
+    Object.assign(trip, updates);
+    await trip.save();
+
+    res.json({
+      success: true,
+      data: trip,
+      message: 'მგზავრობა წარმატებით განახლდა'
+    });
+  } catch (error) {
+    console.error('Error updating trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის განახლება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - ტრიპის გაუქმება
+// ============================================
+
+exports.cancelTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await DriverTrip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    if (trip.driverId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ მგზავრობის გაუქმების უფლება'
+      });
+    }
+
+    trip.status = 'cancelled';
+    await trip.save();
+
+    res.json({
+      success: true,
+      data: trip,
+      message: 'მგზავრობა გაუქმდა'
+    });
+  } catch (error) {
+    console.error('Error cancelling trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის გაუქმება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - ტრიპის დასრულება
+// ============================================
+
+exports.completeTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await DriverTrip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    if (trip.driverId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ მგზავრობის დასრულების უფლება'
+      });
+    }
+
+    trip.status = 'completed';
+    trip.completedAt = new Date();
+    await trip.save();
+
+    res.json({
+      success: true,
+      data: trip,
+      message: 'მგზავრობა დასრულდა'
+    });
+  } catch (error) {
+    console.error('Error completing trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის დასრულება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
 // DRIVER - სტატისტიკა (Authenticated)
 // ============================================
 
@@ -298,20 +646,17 @@ exports.getDriverStats = async (req, res) => {
     if (!driverId) {
       return res.status(401).json({
         success: false,
-        message: 'არ დაა ავტორიზებული'
+        message: 'არ ხართ ავტორიზებული'
       });
     }
 
-    // დასრულებული მგზავრობები
     const completedTrips = await DriverTrip.countDocuments({
       driverId,
       status: 'completed'
     });
 
-    // ყველა მგზავრობა
     const allTrips = await DriverTrip.find({ driverId }).populate('acceptedShippings');
 
-    // შემოსავალი გამოთვლა
     let currentEarnings = 0;
     allTrips.forEach(trip => {
       if (trip.acceptedShippings && trip.acceptedShippings.length > 0) {
@@ -323,15 +668,23 @@ exports.getDriverStats = async (req, res) => {
       }
     });
 
-    // სტატისტიკა
+    const activeTripDoc = allTrips.find(t => t.status === 'active');
+
     const stats = {
       completedTrips: completedTrips || 0,
       averageRating: 4.8,
       reviewCount: Math.floor(Math.random() * 100),
       currentEarnings: parseFloat(currentEarnings.toFixed(2)),
       earningsTrend: '📈 12%',
-      hasActiveTrip: allTrips.some(t => t.status === 'active'),
-      activeTrip: undefined
+      hasActiveTrip: !!activeTripDoc,
+      activeTrip: activeTripDoc
+        ? {
+            from: activeTripDoc.from,
+            to: activeTripDoc.to,
+            distance: 0,
+            estimatedTime: 0
+          }
+        : undefined
     };
 
     res.json({
@@ -343,6 +696,88 @@ exports.getDriverStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'სტატისტიკის ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - შემოსავლის ანგარიში
+// ============================================
+
+exports.getEarningsReport = async (req, res) => {
+  try {
+    const driverId = req.userId;
+    const { period } = req.query; // 'week' | 'month' | 'all'
+
+    const now = new Date();
+    let fromDate = null;
+
+    if (period === 'week') {
+      fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (period === 'month') {
+      fromDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    }
+
+    const query = { driverId, status: 'completed' };
+    if (fromDate) {
+      query.completedAt = { $gte: fromDate };
+    }
+
+    const trips = await DriverTrip.find(query).populate('acceptedShippings').lean();
+
+    let totalEarnings = 0;
+    const breakdown = trips.map(trip => {
+      let tripEarnings = 0;
+      (trip.acceptedShippings || []).forEach(shipping => {
+        tripEarnings += (shipping.weight || 0) * (trip.pricePerKg || 0);
+      });
+      totalEarnings += tripEarnings;
+      return {
+        tripId: trip._id,
+        from: trip.from,
+        to: trip.to,
+        completedAt: trip.completedAt,
+        earnings: parseFloat(tripEarnings.toFixed(2))
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        period: period || 'all',
+        totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+        trips: breakdown
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching earnings report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'შემოსავლის ანგარიშის ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - შეფასებების ნახვა
+// ============================================
+
+exports.getDriverReviews = async (req, res) => {
+  try {
+    // ⚠️ შენიშვნა: რეალური Review მოდელი ჯერ არ არსებობს models/index.js-ში.
+    // როცა შექმნით (მაგ. Review სქემა driverId, rating, comment ველებით),
+    // ჩაანაცვლეთ ეს placeholder რეალური query-თი:
+    // const reviews = await Review.find({ driverId: req.userId }).lean();
+
+    res.json({
+      success: true,
+      data: []
+    });
+  } catch (error) {
+    console.error('Error fetching driver reviews:', error);
+    res.status(500).json({
+      success: false,
+      message: 'შეფასებების ჩატვირთვა ვერ მოხერხდა'
     });
   }
 };
@@ -405,7 +840,7 @@ exports.getAvailableShippings = async (req, res) => {
     console.error('Error getting available shippings:', error);
     res.status(500).json({
       success: false,
-      message: 'გაგზავნების ჩაკრება ვერ მოხერხდა'
+      message: 'გაგზავნების ჩატვირთვა ვერ მოხერხდა'
     });
   }
 };
@@ -429,7 +864,7 @@ exports.acceptShipping = async (req, res) => {
     if (parcel.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        message: 'ეს გაგზავნა უკვე მიიღო სხვამ'
+        message: 'ეს გაგზავნა უკვე მიღებულია სხვის მიერ'
       });
     }
 
@@ -444,6 +879,9 @@ exports.acceptShipping = async (req, res) => {
     });
 
     if (activeTrip) {
+      parcel.acceptedTrip = activeTrip._id;
+      await parcel.save();
+
       activeTrip.acceptedShippings.push(parcel._id);
       activeTrip.availableSpace -= parcel.weight;
       await activeTrip.save();
@@ -452,13 +890,170 @@ exports.acceptShipping = async (req, res) => {
     res.status(200).json({
       success: true,
       shippingId: parcel._id,
+      data: parcel,
       message: 'გაგზავნა წარმატებით მიღებულია!'
     });
   } catch (error) {
     console.error('Error accepting shipping:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
     res.status(500).json({
       success: false,
-      message: 'გაგზავნა ვერ მოხერხდა'
+      message: 'გაგზავნის მიღება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - გაგზავნის უარყოფა
+// ============================================
+
+exports.rejectShipping = async (req, res) => {
+  try {
+    const { shippingId } = req.params;
+    const { reason } = req.body || {};
+
+    const parcel = await Parcel.findById(shippingId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+
+    // უარყოფა უბრალოდ ტოვებს status-ს pending-ზე, რომ სხვა მძღოლმა ნახოს.
+    // (გსურთ, შეგიძლიათ დაამატოთ "rejectedBy" სია დუბლირებული შეთავაზების თავიდან ასაცილებლად)
+    if (reason) {
+      parcel.notes = `${parcel.notes || ''}\n[უარყოფილია: ${reason}]`.trim();
+      await parcel.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'გაგზავნა უარყოფილია'
+    });
+  } catch (error) {
+    console.error('Error rejecting shipping:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'გაგზავნის უარყოფა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - გაგზავნის აღება (in-transit)
+// ============================================
+
+exports.pickupShipping = async (req, res) => {
+  try {
+    const { shippingId } = req.params;
+
+    const parcel = await Parcel.findById(shippingId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+
+    if (parcel.acceptedBy?.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ გაგზავნის განახლების უფლება'
+      });
+    }
+
+    if (parcel.status !== 'accepted') {
+      return res.status(400).json({
+        success: false,
+        message: 'გაგზავნის სტატუსი არ იძლევა ამის საშუალებას'
+      });
+    }
+
+    parcel.status = 'in-transit';
+    await parcel.save();
+
+    res.status(200).json({
+      success: true,
+      data: parcel,
+      message: 'გაგზავნა გზაშია'
+    });
+  } catch (error) {
+    console.error('Error picking up shipping:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'გაგზავნის სტატუსის განახლება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - გაგზავნის ჩაბარება (delivered)
+// ============================================
+
+exports.deliverShipping = async (req, res) => {
+  try {
+    const { shippingId } = req.params;
+
+    const parcel = await Parcel.findById(shippingId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+
+    if (parcel.acceptedBy?.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ გაგზავნის განახლების უფლება'
+      });
+    }
+
+    if (parcel.status !== 'in-transit') {
+      return res.status(400).json({
+        success: false,
+        message: 'გაგზავნის სტატუსი არ იძლევა ამის საშუალებას'
+      });
+    }
+
+    parcel.status = 'delivered';
+    parcel.deliveredAt = new Date();
+    await parcel.save();
+
+    res.status(200).json({
+      success: true,
+      data: parcel,
+      message: 'გაგზავნა ჩაბარებულია'
+    });
+  } catch (error) {
+    console.error('Error delivering shipping:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'გაგზავნა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'გაგზავნის სტატუსის განახლება ვერ მოხერხდა'
     });
   }
 };
