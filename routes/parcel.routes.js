@@ -93,6 +93,7 @@ router.get('/driver/reviews', authMiddleware, parcelController.getDriverReviews)
  * კონკრეტული ტრიპის დეტალები (მხოლოდ იმ driver-ისთვის ვინც შექმნა)
  */
 router.get('/driver/:tripId', authMiddleware, parcelController.getTrip);
+router.get('/driver/recent-trips', parcelController.getRecentTrips);
 
 /**
  * PUT /api/parcels/driver/:tripId
