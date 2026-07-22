@@ -1,5 +1,3 @@
-// 📂 backend/controllers/parcel.controller.js
-
 const { Parcel, DriverTrip } = require('../models');
 
 // ============================================
@@ -476,6 +474,53 @@ exports.getTrip = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის ჩატვირთვა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// PUBLIC - კონკრეტული ტრიპის ნახვა (ID-ით, ავტორიზაციის გარეშე)
+// ============================================
+// ✅ ეს ახალი ფუნქციაა - home page-იდან "მგზავრობის ნახვა" ღილაკისთვის
+
+exports.getTripDetailsPublic = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await DriverTrip.findById(tripId)
+      .populate('acceptedShippings')
+      .populate('driverId', 'firstName lastName')
+      .lean();
+
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    const data = {
+      ...trip,
+      driverName: trip.driverId
+        ? `${trip.driverId.firstName} ${trip.driverId.lastName}`
+        : 'უცნობი მძღოლი'
+    };
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    console.error('Error fetching public trip details:', error);
     if (error.name === 'CastError') {
       return res.status(404).json({
         success: false,

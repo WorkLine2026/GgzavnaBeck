@@ -19,6 +19,15 @@ router.get('/recent-requests', parcelController.getRecentRequests);
  */
 router.get('/driver/recent-trips', parcelController.getRecentTrips);
 
+/**
+ * GET /api/parcels/driver/trip/:tripId ⭐ PUBLIC
+ * კონკრეტული ტრიპის დეტალები - ნებისმიერს შეუძლია ნახვა (home page-ის "ნახვა" ღილაკისთვის)
+ * ⚠️ ეს route აუცილებლად უნდა იყოს '/driver/:tripId'-ის ზემოთ,
+ *    თორემ Express '/driver/trip'-საც '/driver/:tripId'-ად აღიქვამს
+ *    (tripId="trip") და აქამდე ვერასდროს მიაღწევს ამ route-ს.
+ */
+router.get('/driver/trip/:tripId', parcelController.getTripDetailsPublic);
+
 // ================== SENDER ROUTES (AUTHENTICATED) ==================
 
 /**
@@ -93,7 +102,6 @@ router.get('/driver/reviews', authMiddleware, parcelController.getDriverReviews)
  * კონკრეტული ტრიპის დეტალები (მხოლოდ იმ driver-ისთვის ვინც შექმნა)
  */
 router.get('/driver/:tripId', authMiddleware, parcelController.getTrip);
-router.get('/driver/recent-trips', parcelController.getRecentTrips);
 
 /**
  * PUT /api/parcels/driver/:tripId
