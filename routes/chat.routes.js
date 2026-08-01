@@ -12,7 +12,7 @@ const mongoose = require('mongoose');
 router.get('/conversations', authMiddleware, async (req, res) => {
   try {
     console.log('\n====== /chat/conversations ======');
-    
+
     const rawUserId = req.userId;
     console.log('👤 Current req.userId:', rawUserId);
 
@@ -27,7 +27,6 @@ router.get('/conversations', authMiddleware, async (req, res) => {
     const isValidObjectId = mongoose.Types.ObjectId.isValid(userStringId);
     const userObjectId = isValidObjectId ? new mongoose.Types.ObjectId(userStringId) : null;
 
-    // ✅ ძებნა: მოვძებნოთ ყველა მესიჯი, სადაც მომხმარებელი არის sender, recipient, ანrequestId ემთხვევა
     const searchConditions = [
       { senderId: userStringId },
       { recipientId: userStringId }
@@ -38,22 +37,11 @@ router.get('/conversations', authMiddleware, async (req, res) => {
       searchConditions.push({ recipientId: userObjectId });
     }
 
-    // 1. ჯერ ვეძებთ მესიჯებს, სადაც პირდაპირ ფიგურირებს ეს user
-    let messages = await Message.find({ $or: searchConditions })
+    const messages = await Message.find({ $or: searchConditions })
       .populate('senderId', 'firstName lastName')
       .populate('recipientId', 'firstName lastName')
       .sort({ timestamp: -1 })
       .lean();
-
-    // 2. თუ ვერ იპოვა (მაგალითად recipientId null-ია), ამოვიღოთ ყველა მესიჯი, რომrequestId-ით მაინც დავაჯგუფოთ
-    if (messages.length === 0) {
-      console.log('⚠️ პირდაპირი ID-ით ვერ მოიძებნა, მიმდინარეობს requestId-ით ძებნა...');
-      messages = await Message.find({})
-        .populate('senderId', 'firstName lastName')
-        .populate('recipientId', 'firstName lastName')
-        .sort({ timestamp: -1 })
-        .lean();
-    }
 
     console.log('📊 სულ დამუშავებული მესიჯი:', messages.length);
 
@@ -67,26 +55,30 @@ router.get('/conversations', authMiddleware, async (req, res) => {
 
     const conversationMap = new Map();
 
+    // 🔎 დეტალური ანალიზი — დროებითი debug ლოგები
+    console.log('\n🔎 === მესიჯების დეტალური ანალიზი ===');
     for (const msg of messages) {
       if (!msg.requestId) continue;
 
       const msgSenderId = msg.senderId?._id?.toString() || msg.senderId?.toString();
       const msgRecipientId = msg.recipientId?._id?.toString() || msg.recipientId?.toString();
 
-      // თუ მესიჯი არც ამ იუზერის გაგზავნილია და არც მისთვისაა განკუთვნილი (და recipientId null არ არის), გამოვტოვოთ
+      console.log(`📨 msg[${msg._id}] requestId=${msg.requestId} sender=${msgSenderId} recipient=${msgRecipientId} text="${(msg.message || '').slice(0, 20)}"`);
+
       if (msgSenderId !== userStringId && msgRecipientId && msgRecipientId !== userStringId) {
+        console.log('   ⏭️ გამოტოვებულია (არც სენდერი, არც რეციპიენტი არ ვართ)');
         continue;
       }
 
       const isSender = msgSenderId === userStringId;
       let otherUserId = isSender ? msgRecipientId : msgSenderId;
 
-      // თუ recipientId null იყო, მეორე მხარედ ავიღოთ გამგზავნი
       if (!otherUserId || otherUserId === 'null') {
         otherUserId = msgSenderId !== userStringId ? msgSenderId : 'unknown';
       }
 
-      const key = `${msg.requestId}`;
+      const key = `${msg.requestId}:${otherUserId}`;
+      console.log(`   ➡️ isSender=${isSender} otherUserId=${otherUserId} KEY=${key}`);
 
       if (!conversationMap.has(key)) {
         let otherUserName = 'უცნობი მომხმარებელი';
@@ -111,14 +103,30 @@ router.get('/conversations', authMiddleware, async (req, res) => {
           lastMessageTime: msg.timestamp || msg.createdAt,
           unreadCount: 0
         });
+      } else {
+        const existing = conversationMap.get(key);
+        const existingTime = new Date(existing.lastMessageTime).getTime();
+        const msgTime = new Date(msg.timestamp || msg.createdAt).getTime();
+        if (msgTime > existingTime) {
+          existing.lastMessage = msg.message || msg.text || '';
+          existing.lastMessageTime = msg.timestamp || msg.createdAt;
+        }
       }
     }
+    console.log('🔎 === საბოლოო conversationMap keys:', Array.from(conversationMap.keys()), '===\n');
 
-    // ✅ წაუკითხავების დათვლა
     for (const [key, conv] of conversationMap.entries()) {
       const unreadCount = messages.filter(m => {
         const msgSenderId = m.senderId?._id?.toString() || m.senderId?.toString();
-        return m.requestId === conv.conversationId && msgSenderId !== userStringId && !m.isRead;
+        const msgRecipientId = m.recipientId?._id?.toString() || m.recipientId?.toString();
+        const otherIdForThisMsg = msgSenderId === userStringId ? msgRecipientId : msgSenderId;
+
+        return (
+          m.requestId === conv.conversationId &&
+          otherIdForThisMsg === conv.userId &&
+          msgSenderId !== userStringId &&
+          !m.isRead
+        );
       }).length;
 
       conv.unreadCount = unreadCount;

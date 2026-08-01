@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const http = require('http');
+const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 
 // Routes
@@ -24,7 +25,6 @@ const allowedOrigins = [
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     } else {
@@ -69,20 +69,25 @@ const io = new Server(server, {
 const onlineUsers = new Map();
 const rooms = new Map();
 
-function roomKey(requestId) {
-  return `request:${requestId}`;
+/**
+ * ✅ ოთახის გასაღები requestId + ორივე მონაწილის (sorted) id-ით
+ */
+function roomKey(requestId, userA, userB) {
+  const ids = [userA, userB]
+    .filter(Boolean)
+    .map(String)
+    .sort();
+  return `request:${requestId}:${ids.join(':')}`;
 }
 
 function userRoomKey(userId) {
   return `user:${userId}`;
 }
 
-// ✅ გაუმჯობესებული normalizeMessage - იღებს recipientId-ს ავტომატურად, თუ ფრონტიდან არ მოვიდა
 async function normalizeMessage(data, socket) {
   const senderId = data.senderId || socket.userId;
   let recipientId = data.recipientId || data.receiverId || data.to;
 
-  // 💡 თუ recipientId მაინც null-ია, ვცდილობთ ბაზის წინა მესიჯებიდან ამოღებას
   if (!recipientId && data.requestId) {
     try {
       const prevMsg = await Message.findOne({
@@ -113,37 +118,92 @@ async function normalizeMessage(data, socket) {
   };
 }
 
-io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
-  const userId = socket.handshake.auth?.userId;
+/**
+ * ✅ აბრუნებს ისტორიას მხოლოდ ორ კონკრეტულ მონაწილეს შორის.
+ * თუ ID არავალიდურია (ObjectId ფორმატით), query საერთოდ არ
+ * გაეშვება — ცარიელი მასივი დაბრუნდება (crash-ის ნაცვლად).
+ */
+async function fetchPairHistory(requestId, currentUserId, otherUserId) {
+  const isValidId = (id) => id && mongoose.Types.ObjectId.isValid(id);
 
-  if (!token && !userId) {
-    return next(new Error('Authentication error'));
+  const query = { requestId };
+
+  if (isValidId(currentUserId) && isValidId(otherUserId)) {
+    query.$or = [
+      { senderId: currentUserId, recipientId: otherUserId },
+      { senderId: otherUserId, recipientId: currentUserId }
+    ];
+  } else if (isValidId(currentUserId)) {
+    query.$or = [
+      { senderId: currentUserId },
+      { recipientId: currentUserId }
+    ];
+  } else {
+    console.warn('⚠️ fetchPairHistory: არავალიდური currentUserId:', currentUserId);
+    return [];
   }
 
-  socket.userId = userId || 'unknown';
-  return next();
+  console.log('🔍 fetchPairHistory query:', JSON.stringify(query));
+  const result = await Message.find(query).sort({ timestamp: 1 });
+  console.log('🔍 fetchPairHistory ნაპოვნია:', result.length, 'მესიჯი');
+  return result;
+}
+
+/**
+ * ✅ Socket.io ავთენტიფიკაცია — იგივე ლოგიკა, რაც
+ * middleware/auth.middleware.js-შია REST-ისთვის.
+ */
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+
+  if (!token) {
+    console.warn('⚠️ Socket auth: token არ მოვიდა');
+    return next(new Error('Authentication error: token required'));
+  }
+
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+    );
+
+    if (!decoded.userId) {
+      return next(new Error('Authentication error: userId not found in token'));
+    }
+
+    socket.userId = decoded.userId.toString();
+    socket.userEmail = decoded.email;
+    console.log('✅ Socket auth წარმატებული, userId:', socket.userId);
+    return next();
+  } catch (err) {
+    console.error('❌ Socket auth error:', err.message);
+    return next(new Error('Authentication error: invalid or expired token'));
+  }
 });
 
 io.on('connection', (socket) => {
   const userId = socket.userId;
 
-  if (userId && userId !== 'unknown') {
+  if (userId) {
     onlineUsers.set(userId, socket.id);
     socket.join(userRoomKey(userId));
+    console.log('🟢 User დაკავშირდა:', userId);
   }
 
-  socket.on('join_room', async ({ requestId }) => {
+  socket.on('join_room', async ({ requestId, otherUserId }) => {
     if (!requestId) return;
+    console.log('🚪 join_room მოვიდა:', { requestId, otherUserId, currentUserId: socket.userId });
 
-    const room = roomKey(requestId);
+    const currentUserId = socket.userId;
+    const room = roomKey(requestId, currentUserId, otherUserId);
     socket.join(room);
 
     if (!rooms.has(room)) rooms.set(room, new Set());
     rooms.get(room).add(socket.id);
 
     try {
-      const history = await Message.find({ requestId }).sort({ timestamp: 1 });
+      const history = await fetchPairHistory(requestId, currentUserId, otherUserId);
+      console.log('📜 join_room history რაოდენობა:', history.length);
       socket.emit('messages_history', history);
     } catch (err) {
       console.error('❌ history შეცდომა:', err);
@@ -151,11 +211,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('load_messages', async ({ requestId }) => {
+  socket.on('load_messages', async ({ requestId, otherUserId }) => {
     if (!requestId) return;
+    console.log('📜 load_messages მოვიდა:', { requestId, otherUserId, currentUserId: socket.userId });
 
     try {
-      const history = await Message.find({ requestId }).sort({ timestamp: 1 });
+      const history = await fetchPairHistory(requestId, socket.userId, otherUserId);
+      console.log('📜 load_messages history რაოდენობა:', history.length);
       socket.emit('messages_history', history);
     } catch (err) {
       console.error('❌ history შეცდომა:', err);
@@ -166,7 +228,6 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     if (!data?.requestId) return;
 
-    const room = roomKey(data.requestId);
     const normalized = await normalizeMessage(data, socket);
 
     let saved;
@@ -180,13 +241,12 @@ io.on('connection', (socket) => {
 
     const message = saved.toObject();
 
-    // ოთახში გაგზავნა
-    io.to(room).emit('message', message);
-    io.to(room).emit('receive_message', message);
-
-    // პერსონალურ ოთახებში გაგზავნა
     const senderIdStr = message.senderId?.toString();
     const recipientIdStr = message.recipientId?.toString();
+
+    const room = roomKey(message.requestId, senderIdStr, recipientIdStr);
+    io.to(room).emit('message', message);
+    io.to(room).emit('receive_message', message);
 
     if (senderIdStr) {
       io.to(userRoomKey(senderIdStr)).emit('message', message);
@@ -220,8 +280,9 @@ io.on('connection', (socket) => {
       if (msg) {
         const senderIdStr = msg.senderId?.toString();
         const recipientIdStr = msg.recipientId?.toString();
+        const room = roomKey(msg.requestId, senderIdStr, recipientIdStr);
 
-        io.to(roomKey(msg.requestId)).emit('message_read', messageId);
+        io.to(room).emit('message_read', messageId);
         if (senderIdStr) io.to(userRoomKey(senderIdStr)).emit('message_read', messageId);
         if (recipientIdStr) io.to(userRoomKey(recipientIdStr)).emit('message_read', messageId);
       }
