@@ -1,4 +1,5 @@
 const { Parcel, DriverTrip } = require('../models');
+const { uploadManyToCloudinary } = require('../utils/uploadToCloudinary');
 
 // ============================================
 // PUBLIC - ბოლო განცხადებები (Home Page)
@@ -8,7 +9,7 @@ exports.getRecentRequests = async (req, res) => {
   try {
     const requests = await Parcel.find()
       .populate('senderId', 'firstName lastName email')
-      .select('_id from to weight value status createdAt senderId')
+      .select('_id from to weight value status createdAt senderId images')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean();
@@ -42,7 +43,7 @@ exports.getRecentTrips = async (req, res) => {
     const trips = await DriverTrip.find()
       .populate('driverId', 'firstName lastName email')
       .populate('acceptedShippings')
-      .select('_id driverId from to departureDate availableSpace pricePerKg status acceptedShippings createdAt')
+      .select('_id driverId from to departureDate availableSpace pricePerKg status acceptedShippings createdAt images')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean();
@@ -107,6 +108,19 @@ exports.createParcelRequest = async (req, res) => {
       });
     }
 
+    // ✅ NEW: ატვირთული ფოტოები Cloudinary-ზე იტვირთება (memory buffer-იდან)
+    // და მუდმივი https URL-ები ბრუნდება, რომლებიც Mongo-ში ინახება
+    let imageUrls = [];
+    try {
+      imageUrls = await uploadManyToCloudinary(req.files, 'ggzavna/parcels');
+    } catch (uploadError) {
+      console.error('❌ Cloudinary upload error (parcel):', uploadError);
+      return res.status(500).json({
+        success: false,
+        message: 'ფოტოების ატვირთვა ვერ მოხერხდა'
+      });
+    }
+
     const parcel = new Parcel({
       senderId: req.userId,
       senderPhone,
@@ -118,6 +132,7 @@ exports.createParcelRequest = async (req, res) => {
       weight,
       value,
       notes: notes || '',
+      images: imageUrls,
       status: status || 'pending',
       createdAt: new Date()
     });
@@ -155,7 +170,7 @@ exports.getUserRequests = async (req, res) => {
     }
 
     const requests = await Parcel.find({ senderId: userId })
-      .select('_id from to weight value status createdAt')
+      .select('_id from to weight value status createdAt images')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -366,6 +381,19 @@ exports.createTrip = async (req, res) => {
       });
     }
 
+    // ✅ NEW: ატვირთული მანქანის ფოტოები Cloudinary-ზე იტვირთება (memory buffer-იდან)
+    // და მუდმივი https URL-ები ბრუნდება, რომლებიც Mongo-ში ინახება
+    let imageUrls = [];
+    try {
+      imageUrls = await uploadManyToCloudinary(req.files, 'ggzavna/trips');
+    } catch (uploadError) {
+      console.error('❌ Cloudinary upload error (trip):', uploadError);
+      return res.status(500).json({
+        success: false,
+        message: 'ფოტოების ატვირთვა ვერ მოხერხდა'
+      });
+    }
+
     const trip = new DriverTrip({
       driverId: req.userId,
       from,
@@ -378,6 +406,7 @@ exports.createTrip = async (req, res) => {
       carModel: carModel || '',
       carPlate: carPlate || '',
       comments: comments || '',
+      images: imageUrls,
       status: status || 'pending',
       acceptedShippings: [],
       createdAt: new Date()
@@ -857,7 +886,7 @@ exports.getAvailableShippings = async (req, res) => {
       },
       status: 'pending',
       acceptedBy: null
-    }).select('from to description weight value shipDate senderPhone senderName status createdAt').lean();
+    }).select('from to description weight value shipDate senderPhone senderName status createdAt images').lean();
 
     const formattedShippings = shippings.map(parcel => ({
       _id: parcel._id,
@@ -870,6 +899,7 @@ exports.getAvailableShippings = async (req, res) => {
         weight: parcel.weight,
         value: parcel.value
       },
+      images: parcel.images || [],
       senderName: parcel.senderName || 'უსახელო გამგზავნელი',
       senderPhone: parcel.senderPhone,
       status: parcel.status,

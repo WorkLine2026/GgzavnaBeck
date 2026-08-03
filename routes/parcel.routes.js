@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const parcelController = require('../controllers/parcel.controller');
 const authMiddleware = require('../middleware/auth.middleware');
+const { imageUpload } = require('../middleware/upload.middleware');
 
 // ================== PUBLIC ROUTES (NO AUTH) ==================
 
@@ -33,8 +34,16 @@ router.get('/driver/trip/:tripId', parcelController.getTripDetailsPublic);
 /**
  * POST /api/parcels/request
  * sender-ი ქმნის გაგზავნის განცხადებას
+ * ✅ NEW: imageUpload.array('images', 3) — მაქს. 3 ფოტოს ატვირთვა (multipart/form-data),
+ *    Cloudinary-ზე გადადის კონტროლერში. JSON მოთხოვნის შემთხვევაშიც მუშაობს ჩვეულებრივად
+ *    (multer უბრალოდ req.files-ს ტოვებს ცარიელს)
  */
-router.post('/request', authMiddleware, parcelController.createParcelRequest);
+router.post(
+  '/request',
+  authMiddleware,
+  imageUpload.array('images', 3),
+  parcelController.createParcelRequest
+);
 
 /**
  * GET /api/parcels/my-requests
@@ -70,8 +79,14 @@ router.post('/request/:requestId/republish', authMiddleware, parcelController.re
 /**
  * POST /api/parcels/driver/create-trip
  * driver-ი ქმნის ტრიპს
+ * ✅ NEW: imageUpload.array('images', 3) — მაქს. 3 მანქანის ფოტოს ატვირთვა, Cloudinary-ზე
  */
-router.post('/driver/create-trip', authMiddleware, parcelController.createTrip);
+router.post(
+  '/driver/create-trip',
+  authMiddleware,
+  imageUpload.array('images', 3),
+  parcelController.createTrip
+);
 
 /**
  * GET /api/parcels/driver/my-trips

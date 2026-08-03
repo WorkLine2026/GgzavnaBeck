@@ -118,6 +118,18 @@ exports.register = async (req, res) => {
       });
     }
 
+    // ✅ driver-ის შემთხვევაში carPlate-ის უნიკალურობის წინასწარი შემოწმებაც,
+    // რომ მომხმარებელს გასაგები შეცდომა დაუბრუნდეს ჯერ კიდევ SMS-ის გაგზავნამდე
+    if (role === 'driver' && carPlate) {
+      const existingPlate = await User.findOne({ carPlate });
+      if (existingPlate) {
+        return res.status(400).json({
+          success: false,
+          message: 'ეს სახელმწიფო ნომერი უკვე დაკავებულია'
+        });
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
@@ -144,7 +156,8 @@ exports.register = async (req, res) => {
       });
     }
 
-    const newUser = await User.create({
+    // ✅ ბაზისური ველები — ყველა მომხმარებლისთვის საერთო
+    const newUserData = {
       firstName,
       lastName,
       personalNumber,
@@ -153,17 +166,24 @@ exports.register = async (req, res) => {
       password: hashedPassword,
       role,
       phoneVerified: false,
-      // ✅ დამატებული მძღოლის ველები — რეგისტრაციაში მითითებული მონაცემები ბაზაში ინახება
-      carModel: role === 'driver' ? carModel : null,
-      carPlate: role === 'driver' ? carPlate : null,
-      driverLicenseNumber: role === 'driver' ? driverLicenseNumber : null,
       smsVerification: {
         code: otpCode,
         expiresAt,
         attempts: 0,
         reference
       }
-    });
+    };
+
+    // ✅ მძღოლის ველები დოკუმენტს ემატება მხოლოდ მაშინ, როცა role === 'driver'.
+    // sender-ისთვის ეს ველები საერთოდ არ ჩნდება obj-ში (რჩება undefined),
+    // რაც sparse ინდექსს საშუალებას აძლევს სწორად იმუშაოს carPlate-ზე.
+    if (role === 'driver') {
+      newUserData.carModel = carModel;
+      newUserData.carPlate = carPlate;
+      newUserData.driverLicenseNumber = driverLicenseNumber;
+    }
+
+    const newUser = await User.create(newUserData);
 
     return res.status(201).json({
       success: true,
@@ -173,6 +193,16 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     console.error('REGISTER ERROR:', error);
+
+    // ✅ დუბლიკატის შეცდომაზე ცალკე გასაგები მესიჯი (მაგ. carPlate/email/phone/personalNumber)
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || 'მონაცემი';
+      return res.status(400).json({
+        success: false,
+        message: `ეს ${field} უკვე გამოყენებულია`
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: error.message || 'სერვერის შეცდომა რეგისტრაციისას'
@@ -464,22 +494,32 @@ exports.updateProfile = async (req, res) => {
     if (lastName) user.lastName = lastName;
 
     if (user.role === 'driver') {
-      if (carPlate && carPlate !== user.carPlate) {
-        const existingPlate = await User.findOne({
-          carPlate,
-          _id: { $ne: user._id }
-        });
+      // ✅ ცარიელი სტრიქონის შემთხვევაში carPlate-ს ვშლით სრულად (და არა ვწერთ ''-ს),
+      // რომ sparse ინდექსმა ის სწორად გამორიცხოს
+      if (carPlate !== undefined) {
+        const trimmedPlate = (carPlate || '').trim();
 
-        if (existingPlate) {
-          return res.status(400).json({
-            success: false,
-            message: 'ეს სახელმწიფო ნომერი უკვე დაკავებულია'
-          });
+        if (trimmedPlate) {
+          if (trimmedPlate !== user.carPlate) {
+            const existingPlate = await User.findOne({
+              carPlate: trimmedPlate,
+              _id: { $ne: user._id }
+            });
+
+            if (existingPlate) {
+              return res.status(400).json({
+                success: false,
+                message: 'ეს სახელმწიფო ნომერი უკვე დაკავებულია'
+              });
+            }
+          }
+          user.carPlate = trimmedPlate;
+        } else {
+          user.carPlate = undefined;
         }
       }
 
       if (carModel !== undefined) user.carModel = carModel;
-      if (carPlate !== undefined) user.carPlate = carPlate;
       if (driverLicenseNumber !== undefined) user.driverLicenseNumber = driverLicenseNumber;
     }
 
@@ -494,9 +534,10 @@ exports.updateProfile = async (req, res) => {
     console.error('UPDATE PROFILE ERROR:', error);
 
     if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || 'მონაცემი';
       return res.status(400).json({
         success: false,
-        message: 'ეს მონაცემი უკვე გამოყენებულია'
+        message: `ეს ${field} უკვე გამოყენებულია`
       });
     }
 

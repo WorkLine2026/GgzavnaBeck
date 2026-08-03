@@ -18,20 +18,23 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, index: true },
   phone: { type: String, required: true, unique: true, index: true },
   password: { type: String, required: true },
-  
+
   // Angular-ში გაწერილი როლებიდან გამომდინარე ('sender' | 'driver')
-  role: { type: String, enum: ['sender', 'driver'], default: 'sender' }, 
-  
+  role: { type: String, enum: ['sender', 'driver'], default: 'sender' },
+
   phoneVerified: { type: Boolean, default: false },
   smsVerification: { type: smsVerificationSchema, default: undefined },
 
-  // ⬇️ აქ არის დამატებული ველები მძღოლისთვის ⬇️
-  carModel: { type: String, default: null },
-  
-  // sparse: true უზრუნველყოფს იმას, რომ unique შემოწმდეს მხოლოდ მაშინ, როცა ველი შევსებულია
-  carPlate: { type: String, unique: true, sparse: true, default: null }, 
-  
-  driverLicenseNumber: { type: String, default: null }
+  // ⬇️ მძღოლის ველები ⬇️
+  // ‼️ default: null მოშლილია განზრახ — თუ ველი არ მოსულა, ის საერთოდ არ
+  // უნდა ჩაიწეროს დოკუმენტში (undefined), რომ sparse ინდექსმა ის გამორიცხოს.
+  carModel: { type: String },
+
+  // sparse: true უზრუნველყოფს იმას, რომ unique შემოწმდეს მხოლოდ მაშინ,
+  // როცა ველი რეალურად არსებობს დოკუმენტში (და არა null-ის შემთხვევაში)
+  carPlate: { type: String, unique: true, sparse: true },
+
+  driverLicenseNumber: { type: String }
 
 }, { timestamps: true });
 

@@ -70,6 +70,12 @@ const ParcelSchema = new mongoose.Schema({
     default: ''
   },
 
+  // ✅ NEW: გზავნილის ფოტოები (მაქს. 3, URL-ების მასივი)
+  images: {
+    type: [String],
+    default: []
+  },
+
   // Status Pipeline
   status: {
     type: String,
@@ -174,6 +180,12 @@ const DriverTripSchema = new mongoose.Schema({
   comments: {
     type: String,
     default: ''
+  },
+
+  // ✅ NEW: მანქანის ფოტოები (მაქს. 3, URL-ების მასივი)
+  images: {
+    type: [String],
+    default: []
   },
 
   // Trip Status

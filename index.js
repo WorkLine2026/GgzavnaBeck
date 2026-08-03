@@ -39,12 +39,29 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ℹ️ შენიშვნა: ფოტოები ახლა Cloudinary-ზე ინახება (არა ლოკალურ დისკზე),
+// ამიტომ '/uploads' static route საჭირო აღარ არის.
+
 app.use('/api/auth', authRoutes);
 app.use('/api/parcels', parcelRoutes);
 app.use('/api/chat', chatRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
+});
+
+// ✅ NEW: multer-ის (ფაილის ატვირთვის) შეცდომების დამჭერი middleware
+// (მაგ. ზომაზე დიდი ფაილი, არასწორი ტიპი, 3-ზე მეტი ფაილი)
+// ეს უნდა იყოს route-ების შემდეგ, სხვა error-handler-ების წინ.
+app.use((err, req, res, next) => {
+  if (err && (err.name === 'MulterError' || err.message)) {
+    console.error('❌ Upload error:', err.message);
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'ფაილის ატვირთვა ვერ მოხერხდა'
+    });
+  }
+  next(err);
 });
 
 mongoose.connect(process.env.MONGO_URI)
@@ -230,6 +247,20 @@ io.on('connection', (socket) => {
 
     const normalized = await normalizeMessage(data, socket);
 
+    // 🚫 საკუთარ თავზე შეტყობინების გაგზავნის დაბლოკვა
+    // (დამატებითი დაცვა REST/UI-ს გვერდის ავლით პირდაპირ socket-ზე
+    // მოსული მოთხოვნების წინააღმდეგ — 'own request/trip' ჩატი backend-ზეც იკეტება)
+    const senderIdStr = normalized.senderId?.toString();
+    const recipientIdStr = normalized.recipientId?.toString();
+
+    if (senderIdStr && recipientIdStr && senderIdStr === recipientIdStr) {
+      console.warn('⛔ საკუთარ თავზე შეტყობინების მცდელობა დაბლოკილია:', senderIdStr);
+      socket.emit('message_error', {
+        message: 'საკუთარ განცხადებაზე შეტყობინების გაგზავნა შეუძლებელია'
+      });
+      return;
+    }
+
     let saved;
     try {
       saved = await Message.create(normalized);
@@ -241,20 +272,20 @@ io.on('connection', (socket) => {
 
     const message = saved.toObject();
 
-    const senderIdStr = message.senderId?.toString();
-    const recipientIdStr = message.recipientId?.toString();
+    const savedSenderIdStr = message.senderId?.toString();
+    const savedRecipientIdStr = message.recipientId?.toString();
 
-    const room = roomKey(message.requestId, senderIdStr, recipientIdStr);
+    const room = roomKey(message.requestId, savedSenderIdStr, savedRecipientIdStr);
     io.to(room).emit('message', message);
     io.to(room).emit('receive_message', message);
 
-    if (senderIdStr) {
-      io.to(userRoomKey(senderIdStr)).emit('message', message);
+    if (savedSenderIdStr) {
+      io.to(userRoomKey(savedSenderIdStr)).emit('message', message);
     }
-    if (recipientIdStr) {
-      io.to(userRoomKey(recipientIdStr)).emit('message', message);
+    if (savedRecipientIdStr) {
+      io.to(userRoomKey(savedRecipientIdStr)).emit('message', message);
 
-      const recipientSocketId = onlineUsers.get(recipientIdStr);
+      const recipientSocketId = onlineUsers.get(savedRecipientIdStr);
       if (recipientSocketId) {
         io.to(recipientSocketId).emit('notification', {
           type: 'message',
