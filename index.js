@@ -50,9 +50,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
-// ✅ NEW: multer-ის (ფაილის ატვირთვის) შეცდომების დამჭერი middleware
-// (მაგ. ზომაზე დიდი ფაილი, არასწორი ტიპი, 3-ზე მეტი ფაილი)
-// ეს უნდა იყოს route-ების შემდეგ, სხვა error-handler-ების წინ.
+// ✅ multer-ის (ფაილის ატვირთვის) შეცდომების დამჭერი middleware
 app.use((err, req, res, next) => {
   if (err && (err.name === 'MulterError' || err.message)) {
     console.error('❌ Upload error:', err.message);
@@ -248,8 +246,6 @@ io.on('connection', (socket) => {
     const normalized = await normalizeMessage(data, socket);
 
     // 🚫 საკუთარ თავზე შეტყობინების გაგზავნის დაბლოკვა
-    // (დამატებითი დაცვა REST/UI-ს გვერდის ავლით პირდაპირ socket-ზე
-    // მოსული მოთხოვნების წინააღმდეგ — 'own request/trip' ჩატი backend-ზეც იკეტება)
     const senderIdStr = normalized.senderId?.toString();
     const recipientIdStr = normalized.recipientId?.toString();
 
@@ -319,6 +315,52 @@ io.on('connection', (socket) => {
       }
     } catch (err) {
       console.error('❌ mark_as_read შეცდომა:', err);
+    }
+  });
+
+  // ✅ NEW: ცალკეული შეტყობინების წაშლა
+  // მხოლოდ სენდერს შეუძლია საკუთარი მესიჯის წაშლა.
+  // შლის რეალურად ბაზიდან და აცნობებს ორივე მხარეს (room + user rooms),
+  // რომ UI-დან ორივესთვის ერთდროულად გაქრეს (realtime).
+  socket.on('delete_message', async ({ messageId }) => {
+    if (!messageId) return;
+
+    try {
+      const msg = await Message.findById(messageId);
+
+      if (!msg) {
+        socket.emit('message_error', { message: 'შეტყობინება ვერ მოიძებნა' });
+        return;
+      }
+
+      const senderIdStr = msg.senderId?.toString();
+
+      if (senderIdStr !== socket.userId) {
+        console.warn('⛔ წაშლის მცდელობა სხვის მესიჯზე დაბლოკილია:', {
+          messageOwner: senderIdStr,
+          requester: socket.userId
+        });
+        socket.emit('message_error', {
+          message: 'შეგიძლიათ მხოლოდ თქვენი შეტყობინებების წაშლა'
+        });
+        return;
+      }
+
+      const recipientIdStr = msg.recipientId?.toString();
+      const requestId = msg.requestId;
+
+      await Message.findByIdAndDelete(messageId);
+      console.log('🗑️ მესიჯი წაშლილია:', messageId);
+
+      const room = roomKey(requestId, senderIdStr, recipientIdStr);
+      const payload = { messageId, requestId, senderId: senderIdStr, recipientId: recipientIdStr };
+
+      io.to(room).emit('message_deleted', payload);
+      if (senderIdStr) io.to(userRoomKey(senderIdStr)).emit('message_deleted', payload);
+      if (recipientIdStr) io.to(userRoomKey(recipientIdStr)).emit('message_deleted', payload);
+    } catch (err) {
+      console.error('❌ delete_message შეცდომა:', err);
+      socket.emit('message_error', { message: 'შეტყობინების წაშლა ვერ მოხერხდა' });
     }
   });
 
