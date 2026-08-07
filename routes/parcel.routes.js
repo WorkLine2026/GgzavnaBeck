@@ -74,6 +74,14 @@ router.put('/request/:requestId/status', authMiddleware, parcelController.update
  */
 router.post('/request/:requestId/republish', authMiddleware, parcelController.republishRequest);
 
+/**
+ * DELETE /api/parcels/request/:requestId
+ * ✅ NEW: მხოლოდ sender-ს შეუძლია საკუთარი განცხადების სრული წაშლა.
+ * თუ განცხადება უკვე მძღოლის ტრიპზეა მიბმული, ავტომატურად სუფთავდება
+ * იმ ტრიპის acceptedShippings-დანაც და უბრუნდება availableSpace.
+ */
+router.delete('/request/:requestId', authMiddleware, parcelController.deleteParcelRequest);
+
 // ================== DRIVER ROUTES (AUTHENTICATED) ==================
 
 /**
@@ -135,6 +143,14 @@ router.put('/driver/:tripId/cancel', authMiddleware, parcelController.cancelTrip
  * ტრიპის დასრულება
  */
 router.put('/driver/:tripId/complete', authMiddleware, parcelController.completeTrip);
+
+/**
+ * DELETE /api/parcels/driver/:tripId
+ * ✅ NEW: მხოლოდ driver-ს შეუძლია საკუთარი ტრიპის სრული წაშლა.
+ * თუ ტრიპს უკვე ჰქონდა მიღებული ამანათები, ისინი ავტომატურად
+ * უბრუნდება 'pending' სტატუსს, რომ სენდერისთვის ხელახლა ხილვადი გახდეს.
+ */
+router.delete('/driver/:tripId', authMiddleware, parcelController.deleteTrip);
 
 /**
  * GET /api/parcels/available-shippings

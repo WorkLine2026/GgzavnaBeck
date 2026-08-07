@@ -341,6 +341,66 @@ exports.republishRequest = async (req, res) => {
 };
 
 // ============================================
+// SENDER - განცხადების წაშლა (მხოლოდ sender-მა)
+// ============================================
+// ✅ NEW: თუ განცხადება უკვე მიღებულია მძღოლის მიერ (accepted/in-transit),
+// წაშლისას ის ჯერ ამოირიცხება იმ მძღოლის ტრიპის acceptedShippings-დან
+// და მძღოლს უბრუნდება დაკავებული ადგილი (availableSpace), რომ trip
+// "ბრმა" ჩანაწერით არ დარჩეს.
+
+exports.deleteParcelRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+
+    const parcel = await Parcel.findById(requestId);
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+
+    if (parcel.senderId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ განცხადების წაშლის უფლება'
+      });
+    }
+
+    // თუ განცხადება უკვე მძღოლის ტრიპზეა მიბმული — გავასუფთაოთ იქიდანაც
+    if (parcel.acceptedTrip) {
+      const trip = await DriverTrip.findById(parcel.acceptedTrip);
+      if (trip) {
+        trip.acceptedShippings = trip.acceptedShippings.filter(
+          id => id.toString() !== parcel._id.toString()
+        );
+        trip.availableSpace = (trip.availableSpace || 0) + (parcel.weight || 0);
+        await trip.save();
+      }
+    }
+
+    await Parcel.findByIdAndDelete(requestId);
+
+    res.json({
+      success: true,
+      message: 'განცხადება წარმატებით წაიშალა'
+    });
+  } catch (error) {
+    console.error('Error deleting parcel request:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'განცხადება ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'განცხადების წაშლა ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
 // DRIVER - ტრიპის შექმნა
 // ============================================
 
@@ -705,6 +765,67 @@ exports.completeTrip = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'მგზავრობის დასრულება ვერ მოხერხდა'
+    });
+  }
+};
+
+// ============================================
+// DRIVER - ტრიპის წაშლა (მხოლოდ driver-მა)
+// ============================================
+// ✅ NEW: თუ ამ ტრიპს უკვე ჰქონდა მიღებული ამანათები (acceptedShippings),
+// წაშლისას ისინი ბრუნდება 'pending' სტატუსზე, რომ სენდერისთვის ხელახლა
+// ხილვადი გახდეს სხვა მძღოლებისთვის — ნაცვლად "ბრმად" გამოკიდებული parcel-ისა.
+
+exports.deleteTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await DriverTrip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+
+    if (trip.driverId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'თქვენ არ გაქვთ ამ მგზავრობის წაშლის უფლება'
+      });
+    }
+
+    if (trip.acceptedShippings && trip.acceptedShippings.length > 0) {
+      await Parcel.updateMany(
+        { _id: { $in: trip.acceptedShippings } },
+        {
+          $set: {
+            status: 'pending',
+            acceptedBy: null,
+            acceptedTrip: null,
+            acceptedAt: null
+          }
+        }
+      );
+    }
+
+    await DriverTrip.findByIdAndDelete(tripId);
+
+    res.json({
+      success: true,
+      message: 'მგზავრობა წარმატებით წაიშალა'
+    });
+  } catch (error) {
+    console.error('Error deleting trip:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({
+        success: false,
+        message: 'მგზავრობა ვერ მოიძებნა'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'მგზავრობის წაშლა ვერ მოხერხდა'
     });
   }
 };
