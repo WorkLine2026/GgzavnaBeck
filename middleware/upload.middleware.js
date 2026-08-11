@@ -23,4 +23,22 @@ const imageUpload = multer({
   }
 });
 
-module.exports = { imageUpload };
+// ✅ ახალი: მართვის მოწმობის ფოტოსთვის — სურათის გარდა PDF-იც დაშვებულია, ერთი ფაილი
+const licenseFileFilter = (req, file, cb) => {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  if (!allowed.includes(file.mimetype)) {
+    return cb(new Error('დასაშვებია მხოლოდ JPG, PNG ან PDF ფაილი'));
+  }
+  cb(null, true);
+};
+
+const licenseUpload = multer({
+  storage,
+  fileFilter: licenseFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+    files: 1
+  }
+});
+
+module.exports = { imageUpload, licenseUpload };

@@ -2,6 +2,7 @@ const User = require('../models/User');
 const { sendSMS } = require('../services/sms.service');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cloudinary = require('../config/cloudinary');
 
 /**
  * დამხმარე ფუნქცია: ნომრიდან 995 პრეფიქსის მოცილება
@@ -9,6 +10,49 @@ const jwt = require('jsonwebtoken');
 const getCleanPhone = (phone) => {
   if (!phone) return '';
   return phone.toString().startsWith('995') ? phone.toString().replace(/^995/, '') : phone.toString();
+};
+
+/**
+ * ✅ buffer-ის Cloudinary-ზე ატვირთვა stream-ით (memoryStorage-თან ერთად სამუშაოდ)
+ */
+const streamUploadToCloudinary = (buffer, options) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    });
+    uploadStream.end(buffer);
+  });
+};
+
+/**
+ * ✅ ერთი საერთო ფუნქცია OTP-ის გენერაცია + გაგზავნისთვის.
+ * გამოიყენება ორივეგან: ახალი user-ის რეგისტრაციაზე და
+ * უკვე არსებული, მაგრამ ვერიფიცირებული არ არსებული user-ის resend-ზე.
+ */
+const generateAndSendOtp = async (formattedPhone) => {
+  const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const reference = `otp-${Date.now()}`;
+  const smsText = `თქვენი რეგისტრაციის კოდია: ${otpCode}`;
+
+  console.log('Generated OTP:', otpCode);
+
+  const smsResponse = await sendSMS({
+    phone: formattedPhone,
+    content: smsText,
+    reference
+  });
+
+  console.log('SMS Response:', smsResponse);
+
+  return {
+    otpCode,
+    expiresAt,
+    reference,
+    smsResponse,
+    smsSucceeded: !!smsResponse && smsResponse.Success === true
+  };
 };
 
 // ================== LOGIN ==================
@@ -98,6 +142,15 @@ exports.register = async (req, res) => {
 
     console.log('--- REGISTER REQUEST ---');
     console.log('Body:', { firstName, lastName, personalNumber, email, phone, role, carModel, carPlate, driverLicenseNumber });
+    console.log('Uploaded file:', req.file ? `${req.file.originalname} (${req.file.size} bytes)` : 'ფაილი არ მოსულა');
+
+    // ✅ driver-ს სავალდებულოდ სჭირდება მართვის მოწმობის ფოტო
+    if (role === 'driver' && !req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'მართვის მოწმობის ფოტოს ატვირთვა სავალდებულოა'
+      });
+    }
 
     const cleanPhone = getCleanPhone(phone);
     const formattedPhone = `995${cleanPhone}`;
@@ -111,10 +164,69 @@ exports.register = async (req, res) => {
       ]
     });
 
+    // ✅✅ ძირითადი გამოსწორება: თუ user უკვე არსებობს, მაგრამ ტელეფონი
+    // ჯერ არ დაუდასტურებია — აღარ ვბლოკავთ 400-ით, არამედ ვუგზავნით
+    // ახალ ვერიფიკაციის კოდს იმავე ანგარიშზე და ვუშვებთ წინ.
+    // (ამის გარეშე resend/ხელახალი მცდელობა ყოველთვის 400-ით ჩავარდებოდა.)
     if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'მომხმარებელი ამ ნომრით, მეილით ან პირადი ნომრით უკვე არსებობს'
+      if (existingUser.phoneVerified) {
+        return res.status(400).json({
+          success: false,
+          message: 'მომხმარებელი ამ ნომრით, მეილით ან პირადი ნომრით უკვე არსებობს'
+        });
+      }
+
+      const { otpCode, expiresAt, reference, smsResponse, smsSucceeded } =
+        await generateAndSendOtp(formattedPhone);
+
+      if (!smsSucceeded) {
+        console.error('SMS ხელახლა გაგზავნა ჩავარდა:', smsResponse);
+        return res.status(400).json({
+          success: false,
+          message: 'SMS ვერ გაიგზავნა, სცადეთ თავიდან',
+          sms: smsResponse
+        });
+      }
+
+      existingUser.smsVerification = {
+        code: otpCode,
+        expiresAt,
+        attempts: 0,
+        reference
+      };
+
+      // ✅ სურვილისამებრ განვაახლოთ ველებიც, თუ user-მა შესწორებული მონაცემებით სცადა თავიდან
+      if (firstName) existingUser.firstName = firstName;
+      if (lastName) existingUser.lastName = lastName;
+      if (role === 'driver') {
+        if (carModel) existingUser.carModel = carModel;
+        if (carPlate) existingUser.carPlate = carPlate;
+        if (driverLicenseNumber) existingUser.driverLicenseNumber = driverLicenseNumber;
+
+        if (req.file) {
+          try {
+            const isPdf = req.file.mimetype === 'application/pdf';
+            const result = await streamUploadToCloudinary(req.file.buffer, {
+              folder: 'driver-licenses',
+              resource_type: isPdf ? 'raw' : 'image',
+              public_id: `license-${Date.now()}-${Math.round(Math.random() * 1e9)}`
+            });
+            existingUser.driverLicensePhotoUrl = result.secure_url;
+          } catch (uploadErr) {
+            console.error('CLOUDINARY UPLOAD ERROR (resend):', uploadErr);
+            // ფოტოს ატვირთვის შეცდომა არ უნდა ბლოკავდეს კოდის ხელახლა გაგზავნას —
+            // ძველი ფოტო რჩება, user მაინც აგრძელებს ვერიფიკაციაზე
+          }
+        }
+      }
+
+      await existingUser.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'ვერიფიკაციის კოდი ხელახლა გაიგზავნა ნომერზე.',
+        userId: existingUser._id,
+        code: otpCode
       });
     }
 
@@ -130,24 +242,34 @@ exports.register = async (req, res) => {
       }
     }
 
+    // ✅ ჯერ ვცადოთ Cloudinary ატვირთვა (თუ driver-ია) — SMS-ის გაგზავნამდე,
+    // რომ ატვირთვის შეცდომისას ფუჭად არ დაიხარჯოს SMS
+    let licensePhotoUrl = null;
+
+    if (role === 'driver' && req.file) {
+      try {
+        const isPdf = req.file.mimetype === 'application/pdf';
+        const result = await streamUploadToCloudinary(req.file.buffer, {
+          folder: 'driver-licenses',
+          resource_type: isPdf ? 'raw' : 'image',
+          public_id: `license-${Date.now()}-${Math.round(Math.random() * 1e9)}`
+        });
+        licensePhotoUrl = result.secure_url;
+      } catch (uploadErr) {
+        console.error('CLOUDINARY UPLOAD ERROR:', uploadErr);
+        return res.status(400).json({
+          success: false,
+          message: 'მართვის მოწმობის ფოტოს ატვირთვა ვერ მოხერხდა, სცადეთ თავიდან'
+        });
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    const reference = `otp-${Date.now()}`;
-    const smsText = `თქვენი რეგისტრაციის კოდია: ${otpCode}`;
+    const { otpCode, expiresAt, reference, smsResponse, smsSucceeded } =
+      await generateAndSendOtp(formattedPhone);
 
-    console.log('Generated OTP:', otpCode);
-
-    const smsResponse = await sendSMS({
-      phone: formattedPhone,
-      content: smsText,
-      reference
-    });
-
-    console.log('SMS Response in controller:', smsResponse);
-
-    if (!smsResponse || smsResponse.Success !== true) {
+    if (!smsSucceeded) {
       console.error('SMS გაგზავნა ჩავარდა:', smsResponse);
       return res.status(400).json({
         success: false,
@@ -181,6 +303,7 @@ exports.register = async (req, res) => {
       newUserData.carModel = carModel;
       newUserData.carPlate = carPlate;
       newUserData.driverLicenseNumber = driverLicenseNumber;
+      newUserData.driverLicensePhotoUrl = licensePhotoUrl;
     }
 
     const newUser = await User.create(newUserData);

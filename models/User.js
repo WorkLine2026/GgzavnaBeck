@@ -34,7 +34,10 @@ const userSchema = new mongoose.Schema({
   // როცა ველი რეალურად არსებობს დოკუმენტში (და არა null-ის შემთხვევაში)
   carPlate: { type: String, unique: true, sparse: true },
 
-  driverLicenseNumber: { type: String }
+  driverLicenseNumber: { type: String },
+
+  // ✅ ახალი: Cloudinary-ის secure_url მართვის მოწმობის ფოტოსთვის
+  driverLicensePhotoUrl: { type: String }
 
 }, { timestamps: true });
 
