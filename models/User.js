@@ -19,29 +19,26 @@ const userSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true, index: true },
   password: { type: String, required: true },
 
-  // Angular-ში გაწერილი როლებიდან გამომდინარე ('sender' | 'driver')
-  role: { type: String, enum: ['sender', 'driver'], default: 'sender' },
+  // ✅ NEW: 'admin' დამატებულია. register() endpoint მაინც არ უშვებს
+  // 'admin'-ის შექმნას (იხ. auth.controller.js) — admin მხოლოდ
+  // scripts/createAdmin.js-ით ან სხვა admin-ის მიერ იქმნება.
+  role: { type: String, enum: ['sender', 'driver', 'admin'], default: 'sender' },
+
+  // ✅ NEW: admin-ს user-ის დაბლოკვა/გააქტიურება რომ შეეძლოს
+  isBanned: { type: Boolean, default: false },
+  bannedReason: { type: String, default: '' },
 
   phoneVerified: { type: Boolean, default: false },
   smsVerification: { type: smsVerificationSchema, default: undefined },
 
   // ⬇️ მძღოლის ველები ⬇️
-  // ‼️ default: null მოშლილია განზრახ — თუ ველი არ მოსულა, ის საერთოდ არ
-  // უნდა ჩაიწეროს დოკუმენტში (undefined), რომ sparse ინდექსმა ის გამორიცხოს.
   carModel: { type: String },
-
-  // sparse: true უზრუნველყოფს იმას, რომ unique შემოწმდეს მხოლოდ მაშინ,
-  // როცა ველი რეალურად არსებობს დოკუმენტში (და არა null-ის შემთხვევაში)
   carPlate: { type: String, unique: true, sparse: true },
-
   driverLicenseNumber: { type: String },
-
-  // ✅ ახალი: Cloudinary-ის secure_url მართვის მოწმობის ფოტოსთვის
   driverLicensePhotoUrl: { type: String }
 
 }, { timestamps: true });
 
-// ✅ პაროლის შედარება bcrypt-ით
 userSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };

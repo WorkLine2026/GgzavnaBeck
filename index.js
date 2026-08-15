@@ -10,9 +10,10 @@ const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth.routes');
 const parcelRoutes = require('./routes/parcel.routes');
 const chatRoutes = require('./routes/chat.routes');
-
+const adminRoutes = require('./routes/admin.routes');
 // Models
 const Message = require('./models/Message');
+
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/parcels', parcelRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });

@@ -6,13 +6,17 @@ const { uploadManyToCloudinary } = require('../utils/uploadToCloudinary');
 // ============================================
 
 exports.getRecentRequests = async (req, res) => {
+  console.log('🟡 getRecentRequests route-მა მიიღო request');
   try {
+    console.log('🟡 Parcel.find() query იწყება...');
     const requests = await Parcel.find()
       .populate('senderId', 'firstName lastName email')
       .select('_id from to weight value status createdAt senderId images')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean();
+
+    console.log('🟡 Query დასრულდა, ნაპოვნია:', requests.length, 'ჩანაწერი');
 
     const requestsWithNames = requests.map(r => ({
       ...r,
@@ -21,6 +25,7 @@ exports.getRecentRequests = async (req, res) => {
         : 'უცნობი გამგზავნი'
     }));
 
+    console.log('🟡 res.json იგზავნება...');
     res.json({
       success: true,
       requests: requestsWithNames
