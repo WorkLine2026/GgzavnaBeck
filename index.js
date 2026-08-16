@@ -20,7 +20,9 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:4200',
   'https://gadazidva.vercel.app',
-  'https://ggzavna-frontend.vercel.app'
+  'https://ggzavna-frontend.vercel.app',
+  'https://localhost',        // Capacitor Android WebView
+  'capacitor://localhost'     // Capacitor iOS WebView
 ];
 
 app.use(cors({
