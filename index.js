@@ -16,6 +16,7 @@ const parcelRoutes = require('./routes/parcel.routes');
 const chatRoutes = require('./routes/chat.routes');
 const adminRoutes = require('./routes/admin.routes');
 const supportRoutes = require('./routes/support.routes'); // ← ახალი
+const notificationRoutes = require('./routes/notification.routes'); // ← ახალი, სხვა route-ებთან ერთად
 
 // Models
 const Message = require('./models/Message');
@@ -96,7 +97,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/parcels', parcelRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/support', supportRoutes); // ← ახალი
+app.use('/api/support', supportRoutes);
+app.use('/api/notifications', notificationRoutes); // ← ახალი // ← ახალი
 
 // ============================================================
 // HEALTH
