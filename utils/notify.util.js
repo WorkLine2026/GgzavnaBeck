@@ -1,7 +1,18 @@
+// 📂 backend/utils/notify.util.js
+
 const Notification = require('../models/Notification');
 
-// ყოველთვის ჯერ ინახავს DB-ში (რომ არაფერი დაიკარგოს),
-// შემდეგ ცდილობს დამატებით socket-ით real-time მიწოდებას.
+// ============================================
+// notifyUser
+// ============================================
+// ყოველთვის ჯერ ინახავს შეტყობინებას DB-ში (რომ არაფერი დაიკარგოს,
+// მიმღების ონლაინ/ოფლაინ სტატუსის მიუხედავად), შემდეგ დამატებით
+// ცდილობს socket-ით რეალურ დროში მიწოდებას, თუ მიმღები ონლაინშია.
+//
+// ⚠️ ეს ფუნქცია ცვლის parcel.controller.js-ში ადრე არსებულ
+// ლოკალურ notifyUser-ს — გამოძახების ინტერფეისი უცვლელია:
+// notifyUser(req, recipientId, { type, title, body, offerId, ... })
+
 async function notifyUser(req, recipientId, payload) {
   if (!recipientId) {
     return;

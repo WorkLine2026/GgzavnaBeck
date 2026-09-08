@@ -1,4 +1,13 @@
+// 📂 backend/models/Notification.js
+
 const mongoose = require('mongoose');
+
+// ============================================
+// NOTIFICATION MODEL
+// ============================================
+// ინახავს ყველა "ზოგად" შეტყობინებას (pickup offer-ები, trip
+// pickup request-ები და ა.შ.) — განზრახ არ შეიცავს ჩატის (message)
+// ტიპს, რადგან ჩატის შეტყობინებები ცალკე სისტემით იმართება.
 
 const NotificationSchema = new mongoose.Schema({
   recipientId: {
@@ -23,26 +32,59 @@ const NotificationSchema = new mongoose.Schema({
       'trip_pickup_request',
       'trip_pickup_request_accepted',
       'trip_pickup_request_rejected'
-      // ⚠️ განზრახ არ არის აქ 'message' — ჩატის შეტყობინებები არ ინახება/არ იგზავნება ცალკე
+      // ⚠️ განზრახ არ არის აქ 'message'
     ]
   },
 
-  title: { type: String, required: true },
-  body: { type: String, required: true },
+  title: {
+    type: String,
+    required: true
+  },
+  body: {
+    type: String,
+    required: true
+  },
 
-  requestId: { type: mongoose.Schema.Types.ObjectId, default: null },
-  tripId: { type: mongoose.Schema.Types.ObjectId, default: null },
-  offerId: { type: mongoose.Schema.Types.ObjectId, default: null },
-  parcelId: { type: mongoose.Schema.Types.ObjectId, default: null },
+  requestId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null
+  },
+  tripId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null
+  },
+  offerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null
+  },
+  parcelId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null
+  },
 
-  seen: { type: Boolean, default: false, index: true },
+  seen: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
 
-  createdAt: { type: Date, default: Date.now, index: true }
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  }
 }, {
   collection: 'notifications',
   timestamps: false
 });
 
 NotificationSchema.index({ recipientId: 1, seen: 1, createdAt: -1 });
+NotificationSchema.index({ recipientId: 1, createdAt: -1 });
 
-module.exports = mongoose.model('Notification', NotificationSchema);
+// ✅ Overwrite-safe: თუ ეს ფაილი (Windows-ზე path-ის case-სხვაობის
+// ან hot-reload-ის გამო) ერთზე მეტჯერ "შესრულდა", mongoose.model-ის
+// ხელახლა გამოძახება OverwriteModelError-ს ისვრის. ეს guard იყენებს
+// უკვე დარეგისტრირებულ მოდელს, თუ ის უკვე არსებობს.
+module.exports =
+  mongoose.models.Notification ||
+  mongoose.model('Notification', NotificationSchema);

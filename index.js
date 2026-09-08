@@ -20,6 +20,7 @@ const notificationRoutes = require('./routes/notification.routes'); // ← ა�
 
 // Models
 const Message = require('./models/Message');
+const Notification = require('./models/Notification');
 
 // ============================================================
 // ENVIRONMENT
@@ -985,6 +986,11 @@ io.on(
           // --------------------------------------------------
           // NOTIFICATION
           // --------------------------------------------------
+          // ⚠️ განზრახ არ ინახება Notification collection-ში —
+          // 'message' ტიპის შეტყობინებები ცალკე, ჩატის სისტემით
+          // იმართება (იხ. models/Notification.js-ის კომენტარი).
+          // ამიტომ ეს toast მხოლოდ იმ შემთხვევაშია საჭირო, თუ
+          // მიმღები ამ წამს online არის.
 
           if (
             isUserOnline(
@@ -1351,42 +1357,136 @@ io.on(
     // ========================================================
     // SEND NOTIFICATION
     // ========================================================
+    // ⚠️ ეს არის ის ადგილი, სადაც frontend-ის
+    // SocketNotificationService.sendNotification() მიდის
+    // (pickup_offer, trip_pickup_request და ა.შ.).
+    //
+    // ძველი ვერსია მხოლოდ socket-ით აგზავნიდა შეტყობინებას და
+    // საერთოდ არ ინახავდა Notification collection-ში — ამიტომაც
+    // ქრებოდა ყველაფერი refresh-ზე/სხვა device-ზე: GET /recent
+    // უბრალოდ ვერაფერს პოულობდა ბაზაში, რადგან იქ არაფერი
+    // ჩაწერილა.
+    //
+    // ✅ ახლა ჯერ ბაზაში ვინახავთ (გარდა 'message' ტიპისა,
+    // რომელიც განზრახ არ არის Notification schema-ს enum-ში),
+    // და მხოლოდ მერე ვაგზავნით socket-ით — რომ badge/სია ორივე
+    // მუდმივი იყოს.
 
     socket.on(
       'send_notification',
-      payload => {
-        const recipientId =
-          normalizeId(
-            payload?.recipientId
-          );
+      async payload => {
+        try {
+          const recipientId =
+            normalizeId(
+              payload?.recipientId
+            );
 
-        if (!recipientId) {
-          return;
-        }
+          if (!recipientId) {
+            return;
+          }
 
-        const {
-          recipientId: ignored,
-          ...notification
-        } = payload;
+          const {
+            recipientId: ignored,
+            ...notification
+          } = payload || {};
 
-        if (
-          !isUserOnline(
-            recipientId
-          )
-        ) {
-          return;
-        }
+          let savedDoc = null;
 
-        io
-          .to(
-            userRoomKey(
+          // 'message' ტიპი Notification schema-ს enum-ში არ არის —
+          // ის ცალკე, ჩატის სისტემით იმართება და ბაზაში არ ინახება
+          if (
+            notification.type &&
+            notification.type !== 'message'
+          ) {
+            savedDoc =
+              await Notification.create({
+                recipientId,
+
+                type:
+                  notification.type,
+
+                title:
+                  notification.title,
+
+                body:
+                  notification.body,
+
+                requestId:
+                  isValidObjectId(
+                    notification.requestId
+                  )
+                    ? notification.requestId
+                    : null,
+
+                tripId:
+                  isValidObjectId(
+                    notification.tripId
+                  )
+                    ? notification.tripId
+                    : null,
+
+                offerId:
+                  isValidObjectId(
+                    notification.offerId
+                  )
+                    ? notification.offerId
+                    : null,
+
+                parcelId:
+                  isValidObjectId(
+                    notification.parcelId
+                  )
+                    ? notification.parcelId
+                    : null
+              });
+
+            console.log(
+              `💾 Notification saved: ${savedDoc._id} → recipient=${recipientId}`
+            );
+          }
+
+          const payloadToSend =
+            savedDoc
+              ? {
+                  ...notification,
+
+                  _id: String(
+                    savedDoc._id
+                  ),
+
+                  seen: false,
+
+                  createdAt:
+                    savedDoc.createdAt
+                }
+              : notification;
+
+          // ბაზაში უკვე ინახება — ცოცხალ push-ს მხოლოდ მაშინ
+          // ვაგზავნით, თუ მიმღები ამ წამს online არის; offline
+          // მომხმარებელი შემდეგი connect-ისას GET /recent-იდან
+          // მაინც მიიღებს
+          if (
+            isUserOnline(
               recipientId
             )
-          )
-          .emit(
-            'notification',
-            notification
+          ) {
+            io
+              .to(
+                userRoomKey(
+                  recipientId
+                )
+              )
+              .emit(
+                'notification',
+                payloadToSend
+              );
+          }
+        } catch (error) {
+          console.error(
+            '❌ send_notification ERROR:',
+            error
           );
+        }
       }
     );
 

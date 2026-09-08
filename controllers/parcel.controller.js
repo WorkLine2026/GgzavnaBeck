@@ -1,4 +1,5 @@
 const { Parcel, DriverTrip, PickupOffer,TripPickupRequest } = require('../models');
+const Notification = require('../models/Notification');
 const { uploadManyToCloudinary } = require('../utils/uploadToCloudinary');
 
 // ============================================
@@ -6,12 +7,61 @@ const { uploadManyToCloudinary } = require('../utils/uploadToCloudinary');
 // ============================================
 // ✅ NEW: server.js-ში io.on('connection') ატარებს socket-ს
 // 'user:<id>' ოთახში, ასე რომ აქედან უბრალოდ იმ ოთახზე ვგზავნით.
+//
+// ⚠️ FIX: ეს ფუნქცია აქამდე მხოლოდ socket-ით აგზავნიდა შეტყობინებას,
+// ბაზაში საერთოდ არაფერს ინახავდა — ამიტომ badge-ზე ცოცხლად ჩნდებოდა
+// რიცხვი, მაგრამ refresh-ზე (GET /notifications/recent) ბაზაში
+// ვერაფერს პოულობდა და სია ქრებოდა. ახლა ჯერ ბაზაში ვინახავთ
+// (Notification.create), მერე ვაგზავნით — ზუსტად ისე, როგორც
+// server.js-ის 'send_notification' socket-handler-შიც გავაკეთეთ.
+//
+// ფუნქცია async გახდა, მაგრამ ყველა არსებული გამოძახება
+// (notifyUser(req, userId, payload), await-ის გარეშე) უცვლელად
+// მუშაობს — შეცდომებიც შიგნითვე იჭერება, ასე რომ unhandled
+// promise rejection არ იქნება.
 
-function notifyUser(req, userId, payload) {
+async function notifyUser(req, userId, payload) {
   try {
+    if (!userId || !payload) {
+      return;
+    }
+
+    let savedDoc = null;
+
+    // 'message' ტიპი Notification schema-ს enum-ში არ არის (ჩატის
+    // შეტყობინებები ცალკე სისტემით იმართება) — დაცვისთვის ვამოწმებთ,
+    // თუმცა ეს ფუნქცია პრაქტიკაში 'message' ტიპს არასდროს იძახებს.
+    if (payload.type && payload.type !== 'message') {
+      savedDoc = await Notification.create({
+        recipientId: userId,
+
+        type: payload.type,
+        title: payload.title,
+        body: payload.body,
+
+        requestId: payload.requestId || null,
+        tripId: payload.tripId || null,
+        offerId: payload.offerId || null,
+        parcelId: payload.parcelId || null
+      });
+
+      console.log(
+        `💾 Notification saved: ${savedDoc._id} → recipient=${userId} (${payload.type})`
+      );
+    }
+
+    const finalPayload = savedDoc
+      ? {
+          ...payload,
+          _id: String(savedDoc._id),
+          seen: false,
+          createdAt: savedDoc.createdAt
+        }
+      : payload;
+
     const io = req.app.get('io');
-    if (io && userId) {
-      io.to(`user:${userId}`).emit('notification', payload);
+    if (io) {
+      io.to(`user:${userId}`).emit('notification', finalPayload);
     }
   } catch (e) {
     console.error('❌ notifyUser შეცდომა:', e);
