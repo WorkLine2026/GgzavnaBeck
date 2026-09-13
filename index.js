@@ -47,6 +47,8 @@ if (missingEnvVars.length > 0) {
 const app = express();
 
 const allowedOrigins = [
+  'ggzavna.ge',
+  'www.ggzavna.ge',
   'http://localhost:4200',
   'https://gadazidva.vercel.app',
   'https://ggzavna-frontend.vercel.app',
