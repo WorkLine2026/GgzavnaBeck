@@ -154,8 +154,8 @@ const DriverTripSchema = new mongoose.Schema({
   },
   pricePerKg: {
     type: Number,
-    required: true,
-    min: 0.1
+    min: 0.1,
+    default: null // ✅ სურვილისამებრ — null ნიშნავს "შეთანხმებით"
   },
 
   // Driver Contact
