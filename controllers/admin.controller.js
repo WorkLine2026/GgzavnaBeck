@@ -1,5 +1,67 @@
 const User = require('../models/User');
-const { Parcel, DriverTrip } = require('../models');
+const models = require('../models');
+const { Parcel, DriverTrip } = models;
+// ⚠️ თუ ეს ორი მოდელი ../models/index.js-იდან არ იგზავნება, პირდაპირ იტვირთება ფაილიდან.
+// შეამოწმე, რომ models/PickupOffer.js და models/TripPickupRequest.js არსებობს
+const PickupOffer = models.PickupOffer || require('../models/PickupOffer');
+const TripPickupRequest = models.TripPickupRequest || require('../models/TripPickupRequest');
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+
+// search ტექსტი უსაფრთხო regex-ად (სხვანაირად "(" ან "[" შეცდომას აგდებდა)
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getPaging = (query) => {
+  const pageNum = Math.max(parseInt(query.page, 10) || 1, 1);
+  const limitNum = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+  return { pageNum, limitNum, skip: (pageNum - 1) * limitNum };
+};
+
+const buildPagination = (total, pageNum, limitNum) => ({
+  total,
+  page: pageNum,
+  limit: limitNum,
+  totalPages: Math.max(Math.ceil(total / limitNum), 1)
+});
+
+const fullName = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '');
+
+// სახელით ძებნისთვის: პოულობს user-ების id-ებს (სახელი ან გვარი)
+const matchUserIds = async (term) => {
+  const regex = new RegExp(escapeRegex(term), 'i');
+  const users = await User.find({ $or: [{ firstName: regex }, { lastName: regex }] })
+    .select('_id')
+    .limit(200)
+    .lean();
+  return users.map((u) => u._id);
+};
+
+// populate-ებული senderId → ბრტყელი ველები frontend-ისთვის
+const shapeRequest = (r) => ({
+  ...r,
+  senderName: fullName(r.senderId) || r.senderName || 'უცნობი გამგზავნი',
+  senderPhone: r.senderPhone || (r.senderId && r.senderId.phone) || '',
+  senderEmail: r.senderEmail || (r.senderId && r.senderId.email) || '',
+  senderId: (r.senderId && r.senderId._id) || r.senderId
+});
+
+const shapeTrip = (t) => ({
+  ...t,
+  driverName: fullName(t.driverId) || t.driverName || 'უცნობი მძღოლი',
+  senderPhone: t.senderPhone || (t.driverId && t.driverId.phone) || '',
+  driverId: (t.driverId && t.driverId._id) || t.driverId
+});
+
+const byStatus = async (Model) => {
+  const rows = await Model.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+  return Object.fromEntries(rows.map((r) => [r._id || 'unknown', r.count]));
+};
+
+const REQUEST_STATUSES = ['pending', 'accepted', 'in-transit', 'delivered', 'cancelled'];
+const TRIP_STATUSES = ['pending', 'active', 'in-progress', 'completed', 'cancelled'];
+const PERSON_FIELDS = 'firstName lastName phone carModel carPlate';
 
 /* ============================================================
    DASHBOARD STATS
@@ -7,34 +69,63 @@ const { Parcel, DriverTrip } = require('../models');
 
 exports.getDashboardStats = async (req, res) => {
   try {
+    const last7 = { createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } };
+
     const [
-      totalUsers,
-      totalSenders,
-      totalDrivers,
-      totalRequests,
-      pendingRequests,
-      totalTrips,
-      activeTrips
+      totalUsers, totalSenders, totalDrivers, totalAdmins, bannedUsers, newUsers,
+      totalRequests, requestsByStatus, newRequests, valueAgg,
+      totalTrips, tripsByStatus, newTrips,
+      totalOffers, offersByStatus,
+      totalTripRequests, tripRequestsByStatus,
+      recentRequests, recentTrips, recentUsers
     ] = await Promise.all([
-      User.countDocuments({ role: { $ne: 'admin' } }),
+      User.countDocuments(),
       User.countDocuments({ role: 'sender' }),
       User.countDocuments({ role: 'driver' }),
+      User.countDocuments({ role: 'admin' }),
+      User.countDocuments({ isBanned: true }),
+      User.countDocuments(last7),
       Parcel.countDocuments(),
-      Parcel.countDocuments({ status: 'pending' }),
+      byStatus(Parcel),
+      Parcel.countDocuments(last7),
+      Parcel.aggregate([{ $group: { _id: null, sum: { $sum: '$value' } } }]),
       DriverTrip.countDocuments(),
-      DriverTrip.countDocuments({ status: 'active' })
+      byStatus(DriverTrip),
+      DriverTrip.countDocuments(last7),
+      PickupOffer.countDocuments(),
+      byStatus(PickupOffer),
+      TripPickupRequest.countDocuments(),
+      byStatus(TripPickupRequest),
+      Parcel.find().populate('senderId', 'firstName lastName phone email').sort({ createdAt: -1 }).limit(5).lean(),
+      DriverTrip.find().populate('driverId', 'firstName lastName phone').sort({ createdAt: -1 }).limit(5).lean(),
+      User.find().select('-password').sort({ createdAt: -1 }).limit(5).lean()
     ]);
 
     res.json({
       success: true,
       stats: {
-        totalUsers,
-        totalSenders,
-        totalDrivers,
-        totalRequests,
-        pendingRequests,
-        totalTrips,
-        activeTrips
+        users: {
+          total: totalUsers,
+          senders: totalSenders,
+          drivers: totalDrivers,
+          admins: totalAdmins,
+          blocked: bannedUsers,
+          newLast7Days: newUsers
+        },
+        requests: {
+          total: totalRequests,
+          byStatus: requestsByStatus,
+          newLast7Days: newRequests,
+          totalValue: (valueAgg[0] && valueAgg[0].sum) || 0
+        },
+        trips: { total: totalTrips, byStatus: tripsByStatus, newLast7Days: newTrips },
+        offers: { total: totalOffers, byStatus: offersByStatus },
+        tripRequests: { total: totalTripRequests, byStatus: tripRequestsByStatus },
+        recent: {
+          requests: recentRequests.map(shapeRequest),
+          trips: recentTrips.map(shapeTrip),
+          users: recentUsers
+        }
       }
     });
   } catch (error) {
@@ -50,53 +141,38 @@ exports.getDashboardStats = async (req, res) => {
 // GET /api/admin/users?role=driver&search=giorgi&page=1&limit=20
 exports.getAllUsers = async (req, res) => {
   try {
-    const { role, search, page = 1, limit = 20 } = req.query;
+    const { role, search } = req.query;
+    const { pageNum, limitNum, skip } = getPaging(req.query);
 
     const query = {};
     if (role && ['sender', 'driver', 'admin'].includes(role)) {
       query.role = role;
     }
-    if (search) {
-      const regex = new RegExp(search, 'i');
+    if (search && search.trim()) {
+      const regex = new RegExp(escapeRegex(search.trim()), 'i');
       query.$or = [
         { firstName: regex },
         { lastName: regex },
         { email: regex },
         { phone: regex },
-        { personalNumber: regex }
+        { personalNumber: regex },
+        { carPlate: regex }
       ];
     }
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-
     const [users, total] = await Promise.all([
-      User.find(query)
-        .select('-password')
-        .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum)
-        .lean(),
+      User.find(query).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
       User.countDocuments(query)
     ]);
 
-    res.json({
-      success: true,
-      users,
-      pagination: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
-      }
-    });
+    res.json({ success: true, users, pagination: buildPagination(total, pageNum, limitNum) });
   } catch (error) {
     console.error('ADMIN GET USERS ERROR:', error);
     res.status(500).json({ success: false, message: 'მომხმარებლების ჩატვირთვა ვერ მოხერხდა' });
   }
 };
 
-// GET /api/admin/users/:userId
+// GET /api/admin/users/:userId  — პროფილი + მისი განცხადებები და მგზავრობები
 exports.getUserById = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).select('-password').lean();
@@ -104,15 +180,21 @@ exports.getUserById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'მომხმარებელი ვერ მოიძებნა' });
     }
 
-    // დამატებით — ამ user-ის request-ები და trip-ები (მოკლედ)
-    const [requestsCount, tripsCount] = await Promise.all([
+    const [requests, trips, requestsCount, tripsCount, offersAsDriver, offersAsSender] = await Promise.all([
+      Parcel.find({ senderId: user._id }).sort({ createdAt: -1 }).limit(50).lean(),
+      DriverTrip.find({ driverId: user._id }).sort({ createdAt: -1 }).limit(50).lean(),
       Parcel.countDocuments({ senderId: user._id }),
-      DriverTrip.countDocuments({ driverId: user._id })
+      DriverTrip.countDocuments({ driverId: user._id }),
+      PickupOffer.countDocuments({ driverId: user._id }),
+      PickupOffer.countDocuments({ senderId: user._id })
     ]);
 
     res.json({
       success: true,
-      user: { ...user, requestsCount, tripsCount }
+      user: { ...user, requestsCount, tripsCount },
+      requests,
+      trips,
+      offers: { asDriver: offersAsDriver, asSender: offersAsSender }
     });
   } catch (error) {
     console.error('ADMIN GET USER BY ID ERROR:', error);
@@ -131,20 +213,14 @@ exports.updateUserRole = async (req, res) => {
       return res.status(400).json({ success: false, message: 'არასწორი role' });
     }
 
-    // ადმინმა საკუთარ თავს role არ უნდა ჩამოართვას შემთხვევით
-    if (req.params.userId === req.userId && role !== 'admin') {
+    if (req.params.userId === String(req.userId) && role !== 'admin') {
       return res.status(400).json({
         success: false,
         message: 'საკუთარი admin role-ის ჩამოცილება საკუთარი ანგარიშიდან არ შეიძლება'
       });
     }
 
-    const user = await User.findByIdAndUpdate(
-      req.params.userId,
-      { role },
-      { new: true }
-    ).select('-password');
-
+    const user = await User.findByIdAndUpdate(req.params.userId, { role }, { new: true }).select('-password');
     if (!user) {
       return res.status(404).json({ success: false, message: 'მომხმარებელი ვერ მოიძებნა' });
     }
@@ -161,7 +237,7 @@ exports.setUserBanStatus = async (req, res) => {
   try {
     const { banned, reason } = req.body;
 
-    if (req.params.userId === req.userId) {
+    if (req.params.userId === String(req.userId)) {
       return res.status(400).json({ success: false, message: 'საკუთარი თავის დაბლოკვა არ შეიძლება' });
     }
 
@@ -186,10 +262,10 @@ exports.setUserBanStatus = async (req, res) => {
   }
 };
 
-// DELETE /api/admin/users/:userId
+// DELETE /api/admin/users/:userId  — user + მისი ყველა მონაცემი (cascade)
 exports.deleteUser = async (req, res) => {
   try {
-    if (req.params.userId === req.userId) {
+    if (req.params.userId === String(req.userId)) {
       return res.status(400).json({ success: false, message: 'საკუთარი ანგარიშის წაშლა არ შეიძლება' });
     }
 
@@ -197,13 +273,36 @@ exports.deleteUser = async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, message: 'მომხმარებელი ვერ მოიძებნა' });
     }
+    const userId = user._id;
 
-    // ⚠️ შენიშვნა: ეს არ შლის ავტომატურად user-ის request/trip ჩანაწერებს.
-    // საჭიროებისამებრ შეგიძლიათ აქ დაამატოთ:
-    // await Parcel.deleteMany({ senderId: user._id });
-    // await DriverTrip.deleteMany({ driverId: user._id });
+    // 1) ამ user-ის განცხადებები, რომლებიც სხვის trip-ზეა მიღებული — trip-ს ვუბრუნებთ ადგილს
+    const ownParcels = await Parcel.find({ senderId: userId, acceptedTrip: { $ne: null } });
+    for (const p of ownParcels) {
+      await DriverTrip.updateOne(
+        { _id: p.acceptedTrip },
+        { $pull: { acceptedShippings: p._id }, $inc: { availableSpace: p.weight || 0 } }
+      );
+    }
 
-    res.json({ success: true, message: 'მომხმარებელი წარმატებით წაიშალა' });
+    // 2) ამ user-ის trip-ებზე მიღებული ნივთები ისევ pending ხდება
+    const ownTrips = await DriverTrip.find({ driverId: userId }).select('acceptedShippings');
+    const acceptedIds = ownTrips.flatMap((t) => t.acceptedShippings || []);
+    if (acceptedIds.length) {
+      await Parcel.updateMany(
+        { _id: { $in: acceptedIds } },
+        { $set: { status: 'pending', acceptedBy: null, acceptedTrip: null, acceptedAt: null } }
+      );
+    }
+
+    // 3) თვითონ ჩანაწერების წაშლა
+    await Promise.all([
+      Parcel.deleteMany({ senderId: userId }),
+      DriverTrip.deleteMany({ driverId: userId }),
+      PickupOffer.deleteMany({ $or: [{ driverId: userId }, { senderId: userId }] }),
+      TripPickupRequest.deleteMany({ $or: [{ driverId: userId }, { senderId: userId }] })
+    ]);
+
+    res.json({ success: true, message: 'მომხმარებელი და მისი მონაცემები წარმატებით წაიშალა' });
   } catch (error) {
     console.error('ADMIN DELETE USER ERROR:', error);
     if (error.name === 'CastError') {
@@ -220,46 +319,41 @@ exports.deleteUser = async (req, res) => {
 // GET /api/admin/requests?status=pending&search=&page=1&limit=20
 exports.getAllRequestsAdmin = async (req, res) => {
   try {
-    const { status, search, page = 1, limit = 20 } = req.query;
+    const { status, search } = req.query;
+    const { pageNum, limitNum, skip } = getPaging(req.query);
 
     const query = {};
-    if (status && ['pending', 'accepted', 'in-transit', 'delivered', 'cancelled'].includes(status)) {
+    if (status && REQUEST_STATUSES.includes(status)) {
       query.status = status;
     }
-    if (search) {
-      const regex = new RegExp(search, 'i');
-      query.$or = [{ from: regex }, { to: regex }, { senderPhone: regex }];
+    if (search && search.trim()) {
+      const term = search.trim();
+      const regex = new RegExp(escapeRegex(term), 'i');
+      const senderIds = await matchUserIds(term);
+      query.$or = [
+        { from: regex },
+        { to: regex },
+        { senderPhone: regex },
+        { recipientPhone: regex },
+        { description: regex },
+        { senderId: { $in: senderIds } }
+      ];
     }
-
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const [requests, total] = await Promise.all([
       Parcel.find(query)
         .populate('senderId', 'firstName lastName email phone')
         .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
+        .skip(skip)
         .limit(limitNum)
         .lean(),
       Parcel.countDocuments(query)
     ]);
 
-    const requestsWithNames = requests.map(r => ({
-      ...r,
-      senderName: r.senderId
-        ? `${r.senderId.firstName} ${r.senderId.lastName}`
-        : 'უცნობი გამგზავნი'
-    }));
-
     res.json({
       success: true,
-      requests: requestsWithNames,
-      pagination: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
-      }
+      requests: requests.map(shapeRequest),
+      pagination: buildPagination(total, pageNum, limitNum)
     });
   } catch (error) {
     console.error('ADMIN GET ALL REQUESTS ERROR:', error);
@@ -268,12 +362,10 @@ exports.getAllRequestsAdmin = async (req, res) => {
 };
 
 // PUT /api/admin/requests/:requestId/status   body: { status }
-// ✅ ownership-შემოწმების გარეშე — admin-ს ნებისმიერის სტატუსის შეცვლა შეუძლია
 exports.forceUpdateRequestStatus = async (req, res) => {
   try {
     const { status } = req.body;
-    const allowed = ['pending', 'accepted', 'in-transit', 'delivered', 'cancelled'];
-    if (!allowed.includes(status)) {
+    if (!REQUEST_STATUSES.includes(status)) {
       return res.status(400).json({ success: false, message: 'სტატუსი ვალიდური არ არის' });
     }
 
@@ -297,7 +389,6 @@ exports.forceUpdateRequestStatus = async (req, res) => {
 };
 
 // DELETE /api/admin/requests/:requestId
-// ✅ ownership-შემოწმების გარეშე — admin-ს ნებისმიერის წაშლა შეუძლია
 exports.forceDeleteRequest = async (req, res) => {
   try {
     const parcel = await Parcel.findById(req.params.requestId);
@@ -309,7 +400,7 @@ exports.forceDeleteRequest = async (req, res) => {
       const trip = await DriverTrip.findById(parcel.acceptedTrip);
       if (trip) {
         trip.acceptedShippings = trip.acceptedShippings.filter(
-          id => id.toString() !== parcel._id.toString()
+          (id) => id.toString() !== parcel._id.toString()
         );
         trip.availableSpace = (trip.availableSpace || 0) + (parcel.weight || 0);
         await trip.save();
@@ -317,6 +408,7 @@ exports.forceDeleteRequest = async (req, res) => {
     }
 
     await Parcel.findByIdAndDelete(req.params.requestId);
+    await PickupOffer.deleteMany({ parcelId: req.params.requestId });
 
     res.json({ success: true, message: 'განცხადება წარმატებით წაიშალა (admin)' });
   } catch (error) {
@@ -335,47 +427,41 @@ exports.forceDeleteRequest = async (req, res) => {
 // GET /api/admin/trips?status=active&search=&page=1&limit=20
 exports.getAllTripsAdmin = async (req, res) => {
   try {
-    const { status, search, page = 1, limit = 20 } = req.query;
+    const { status, search } = req.query;
+    const { pageNum, limitNum, skip } = getPaging(req.query);
 
     const query = {};
-    if (status && ['pending', 'active', 'in-progress', 'completed', 'cancelled'].includes(status)) {
+    if (status && TRIP_STATUSES.includes(status)) {
       query.status = status;
     }
-    if (search) {
-      const regex = new RegExp(search, 'i');
-      query.$or = [{ from: regex }, { to: regex }, { carPlate: regex }];
+    if (search && search.trim()) {
+      const term = search.trim();
+      const regex = new RegExp(escapeRegex(term), 'i');
+      const driverIds = await matchUserIds(term);
+      query.$or = [
+        { from: regex },
+        { to: regex },
+        { carPlate: regex },
+        { carModel: regex },
+        { driverId: { $in: driverIds } }
+      ];
     }
-
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const [trips, total] = await Promise.all([
       DriverTrip.find(query)
         .populate('driverId', 'firstName lastName email phone')
         .populate('acceptedShippings')
         .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
+        .skip(skip)
         .limit(limitNum)
         .lean(),
       DriverTrip.countDocuments(query)
     ]);
 
-    const tripsWithNames = trips.map(trip => ({
-      ...trip,
-      driverName: trip.driverId
-        ? `${trip.driverId.firstName} ${trip.driverId.lastName}`
-        : 'უცნობი მძღოლი'
-    }));
-
     res.json({
       success: true,
-      trips: tripsWithNames,
-      pagination: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
-      }
+      trips: trips.map(shapeTrip),
+      pagination: buildPagination(total, pageNum, limitNum)
     });
   } catch (error) {
     console.error('ADMIN GET ALL TRIPS ERROR:', error);
@@ -383,8 +469,33 @@ exports.getAllTripsAdmin = async (req, res) => {
   }
 };
 
+// PUT /api/admin/trips/:tripId/status   body: { status }
+exports.forceUpdateTripStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!TRIP_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: 'სტატუსი ვალიდური არ არის' });
+    }
+
+    const trip = await DriverTrip.findById(req.params.tripId);
+    if (!trip) {
+      return res.status(404).json({ success: false, message: 'მგზავრობა ვერ მოიძებნა' });
+    }
+
+    trip.status = status;
+    await trip.save();
+
+    res.json({ success: true, data: trip, message: 'სტატუსი წარმატებით განახლდა' });
+  } catch (error) {
+    console.error('ADMIN FORCE UPDATE TRIP STATUS ERROR:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({ success: false, message: 'მგზავრობა ვერ მოიძებნა' });
+    }
+    res.status(500).json({ success: false, message: 'სტატუსის განახლება ვერ მოხერხდა' });
+  }
+};
+
 // PUT /api/admin/trips/:tripId/cancel
-// ✅ ownership-შემოწმების გარეშე
 exports.forceCancelTrip = async (req, res) => {
   try {
     const trip = await DriverTrip.findById(req.params.tripId);
@@ -406,7 +517,6 @@ exports.forceCancelTrip = async (req, res) => {
 };
 
 // DELETE /api/admin/trips/:tripId
-// ✅ ownership-შემოწმების გარეშე
 exports.forceDeleteTrip = async (req, res) => {
   try {
     const trip = await DriverTrip.findById(req.params.tripId);
@@ -422,12 +532,111 @@ exports.forceDeleteTrip = async (req, res) => {
     }
 
     await DriverTrip.findByIdAndDelete(req.params.tripId);
+    await TripPickupRequest.deleteMany({ tripId: req.params.tripId });
 
     res.json({ success: true, message: 'მგზავრობა წარმატებით წაიშალა (admin)' });
   } catch (error) {
     console.error('ADMIN FORCE DELETE TRIP ERROR:', error);
     if (error.name === 'CastError') {
       return res.status(404).json({ success: false, message: 'მგზავრობა ვერ მოიძებნა' });
+    }
+    res.status(500).json({ success: false, message: 'წაშლა ვერ მოხერხდა' });
+  }
+};
+
+/* ============================================================
+   PICKUP OFFERS (მძღოლის შეთავაზება კონკრეტულ ნივთზე)
+   ============================================================ */
+
+// GET /api/admin/offers?status=pending&page=1&limit=20
+exports.getAllOffersAdmin = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const { pageNum, limitNum, skip } = getPaging(req.query);
+
+    const query = {};
+    if (status && status !== 'all') query.status = status;
+
+    const [offers, total] = await Promise.all([
+      PickupOffer.find(query)
+        .populate('parcelId', 'from to weight value status')
+        .populate('driverId', PERSON_FIELDS)
+        .populate('senderId', PERSON_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      PickupOffer.countDocuments(query)
+    ]);
+
+    res.json({ success: true, offers, pagination: buildPagination(total, pageNum, limitNum) });
+  } catch (error) {
+    console.error('ADMIN GET OFFERS ERROR:', error);
+    res.status(500).json({ success: false, message: 'შეთავაზებების ჩატვირთვა ვერ მოხერხდა' });
+  }
+};
+
+// DELETE /api/admin/offers/:offerId
+exports.forceDeleteOffer = async (req, res) => {
+  try {
+    const offer = await PickupOffer.findByIdAndDelete(req.params.offerId);
+    if (!offer) {
+      return res.status(404).json({ success: false, message: 'შეთავაზება ვერ მოიძებნა' });
+    }
+    res.json({ success: true, message: 'შეთავაზება წაიშალა (admin)' });
+  } catch (error) {
+    console.error('ADMIN DELETE OFFER ERROR:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({ success: false, message: 'შეთავაზება ვერ მოიძებნა' });
+    }
+    res.status(500).json({ success: false, message: 'წაშლა ვერ მოხერხდა' });
+  }
+};
+
+/* ============================================================
+   TRIP PICKUP REQUESTS (გამგზავნის მოთხოვნა კონკრეტულ მგზავრობაზე)
+   ============================================================ */
+
+// GET /api/admin/trip-requests?status=pending&page=1&limit=20
+exports.getAllTripRequestsAdmin = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const { pageNum, limitNum, skip } = getPaging(req.query);
+
+    const query = {};
+    if (status && status !== 'all') query.status = status;
+
+    const [tripRequests, total] = await Promise.all([
+      TripPickupRequest.find(query)
+        .populate('tripId', 'from to departureDate status')
+        .populate('driverId', PERSON_FIELDS)
+        .populate('senderId', PERSON_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      TripPickupRequest.countDocuments(query)
+    ]);
+
+    res.json({ success: true, tripRequests, pagination: buildPagination(total, pageNum, limitNum) });
+  } catch (error) {
+    console.error('ADMIN GET TRIP REQUESTS ERROR:', error);
+    res.status(500).json({ success: false, message: 'მოთხოვნების ჩატვირთვა ვერ მოხერხდა' });
+  }
+};
+
+// DELETE /api/admin/trip-requests/:requestId
+exports.forceDeleteTripRequest = async (req, res) => {
+  try {
+    const doc = await TripPickupRequest.findByIdAndDelete(req.params.requestId);
+    if (!doc) {
+      return res.status(404).json({ success: false, message: 'მოთხოვნა ვერ მოიძებნა' });
+    }
+    res.json({ success: true, message: 'მოთხოვნა წაიშალა (admin)' });
+  } catch (error) {
+    console.error('ADMIN DELETE TRIP REQUEST ERROR:', error);
+    if (error.name === 'CastError') {
+      return res.status(404).json({ success: false, message: 'მოთხოვნა ვერ მოიძებნა' });
     }
     res.status(500).json({ success: false, message: 'წაშლა ვერ მოხერხდა' });
   }

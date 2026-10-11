@@ -25,7 +25,16 @@ router.delete('/requests/:requestId', adminController.forceDeleteRequest);
 
 // ================== DRIVER TRIPS ==================
 router.get('/trips', adminController.getAllTripsAdmin);
+router.put('/trips/:tripId/status', adminController.forceUpdateTripStatus);
 router.put('/trips/:tripId/cancel', adminController.forceCancelTrip);
 router.delete('/trips/:tripId', adminController.forceDeleteTrip);
+
+// ================== PICKUP OFFERS (მძღოლი → ნივთი) ==================
+router.get('/offers', adminController.getAllOffersAdmin);
+router.delete('/offers/:offerId', adminController.forceDeleteOffer);
+
+// ================== TRIP REQUESTS (გამგზავნი → მგზავრობა) ==================
+router.get('/trip-requests', adminController.getAllTripRequestsAdmin);
+router.delete('/trip-requests/:requestId', adminController.forceDeleteTripRequest);
 
 module.exports = router;
