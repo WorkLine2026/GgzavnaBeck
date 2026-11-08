@@ -15,8 +15,9 @@ const authRoutes = require('./routes/auth.routes');
 const parcelRoutes = require('./routes/parcel.routes');
 const chatRoutes = require('./routes/chat.routes');
 const adminRoutes = require('./routes/admin.routes');
-const supportRoutes = require('./routes/support.routes'); // ← ახალი
-const notificationRoutes = require('./routes/notification.routes'); // ← ახალი, სხვა route-ებთან ერთად
+const supportRoutes = require('./routes/support.routes');
+const notificationRoutes = require('./routes/notification.routes');
+const userRoutes = require('./routes/user.routes'); // ⭐ რეიტინგი
 
 // Models
 const Message = require('./models/Message');
@@ -101,7 +102,8 @@ app.use('/api/parcels', parcelRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
-app.use('/api/notifications', notificationRoutes); // ← ახალი // ← ახალი
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/users', userRoutes); // ⭐ რეიტინგი
 
 // ============================================================
 // HEALTH

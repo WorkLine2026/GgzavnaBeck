@@ -2,24 +2,6 @@ const { Parcel, DriverTrip, PickupOffer,TripPickupRequest } = require('../models
 const Notification = require('../models/Notification');
 const { uploadManyToCloudinary } = require('../utils/uploadToCloudinary');
 
-// ============================================
-// UTIL - realtime შეტყობინების გაგზავნა კონკრეტულ user-ზე
-// ============================================
-// ✅ NEW: server.js-ში io.on('connection') ატარებს socket-ს
-// 'user:<id>' ოთახში, ასე რომ აქედან უბრალოდ იმ ოთახზე ვგზავნით.
-//
-// ⚠️ FIX: ეს ფუნქცია აქამდე მხოლოდ socket-ით აგზავნიდა შეტყობინებას,
-// ბაზაში საერთოდ არაფერს ინახავდა — ამიტომ badge-ზე ცოცხლად ჩნდებოდა
-// რიცხვი, მაგრამ refresh-ზე (GET /notifications/recent) ბაზაში
-// ვერაფერს პოულობდა და სია ქრებოდა. ახლა ჯერ ბაზაში ვინახავთ
-// (Notification.create), მერე ვაგზავნით — ზუსტად ისე, როგორც
-// server.js-ის 'send_notification' socket-handler-შიც გავაკეთეთ.
-//
-// ფუნქცია async გახდა, მაგრამ ყველა არსებული გამოძახება
-// (notifyUser(req, userId, payload), await-ის გარეშე) უცვლელად
-// მუშაობს — შეცდომებიც შიგნითვე იჭერება, ასე რომ unhandled
-// promise rejection არ იქნება.
-
 async function notifyUser(req, userId, payload) {
   try {
     if (!userId || !payload) {
@@ -28,9 +10,7 @@ async function notifyUser(req, userId, payload) {
 
     let savedDoc = null;
 
-    // 'message' ტიპი Notification schema-ს enum-ში არ არის (ჩატის
-    // შეტყობინებები ცალკე სისტემით იმართება) — დაცვისთვის ვამოწმებთ,
-    // თუმცა ეს ფუნქცია პრაქტიკაში 'message' ტიპს არასდროს იძახებს.
+
     if (payload.type && payload.type !== 'message') {
       savedDoc = await Notification.create({
         recipientId: userId,
@@ -68,9 +48,6 @@ async function notifyUser(req, userId, payload) {
   }
 }
 
-// ============================================
-// PUBLIC - ბოლო განცხადებები (Home Page)
-// ============================================
 
 exports.getRecentRequests = async (req, res) => {
   try {
@@ -101,9 +78,6 @@ exports.getRecentRequests = async (req, res) => {
   }
 };
 
-// ============================================
-// PUBLIC - ბოლო მგზავრობები (Home Page)
-// ============================================
 
 exports.getRecentTrips = async (req, res) => {
   try {
@@ -135,9 +109,6 @@ exports.getRecentTrips = async (req, res) => {
   }
 };
 
-// ============================================
-// SENDER - განცხადების დადება
-// ============================================
 
 exports.createParcelRequest = async (req, res) => {
   try {
@@ -175,8 +146,7 @@ exports.createParcelRequest = async (req, res) => {
       });
     }
 
-    // ✅ ატვირთული ფოტოები Cloudinary-ზე იტვირთება (memory buffer-იდან)
-    // და მუდმივი https URL-ები ბრუნდება, რომლებიც Mongo-ში ინახება
+
     let imageUrls = [];
     try {
       imageUrls = await uploadManyToCloudinary(req.files, 'ggzavna/parcels');
@@ -221,9 +191,6 @@ exports.createParcelRequest = async (req, res) => {
   }
 };
 
-// ============================================
-// SENDER - ჩემი განცხადებები (Authenticated)
-// ============================================
 
 exports.getUserRequests = async (req, res) => {
   try {
@@ -254,9 +221,6 @@ exports.getUserRequests = async (req, res) => {
   }
 };
 
-// ============================================
-// PUBLIC/SENDER - ერთი კონკრეტული განცხადების ნახვა (ID-ით)
-// ============================================
 
 exports.getParcelRequestById = async (req, res) => {
   try {
@@ -299,9 +263,6 @@ exports.getParcelRequestById = async (req, res) => {
   }
 };
 
-// ============================================
-// SENDER - სტატუსის განახლება (მხოლოდ sender-მა)
-// ============================================
 
 exports.updateParcelStatus = async (req, res) => {
   try {

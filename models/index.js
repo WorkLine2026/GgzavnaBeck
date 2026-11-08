@@ -1,4 +1,4 @@
-// 📂 backend/models/persel.js
+// 📂 backend/models/index.js
 
 const mongoose = require('mongoose');
 
@@ -70,7 +70,7 @@ const ParcelSchema = new mongoose.Schema({
     default: ''
   },
 
-  // ✅ NEW: გზავნილის ფოტოები (მაქს. 3, URL-ების მასივი)
+  // ✅ გზავნილის ფოტოები (მაქს. 3, URL-ების მასივი)
   images: {
     type: [String],
     default: []
@@ -182,7 +182,7 @@ const DriverTripSchema = new mongoose.Schema({
     default: ''
   },
 
-  // ✅ NEW: მანქანის ფოტოები (მაქს. 3, URL-ების მასივი)
+  // ✅ მანქანის ფოტოები (მაქს. 3, URL-ების მასივი)
   images: {
     type: [String],
     default: []
@@ -224,7 +224,7 @@ const DriverTripSchema = new mongoose.Schema({
 // ============================================
 // PICKUP OFFER MODEL - ნივთის წაღების მოთხოვნა
 // ============================================
-// ✅ NEW: მძღოლი ითხოვს კონკრეტული parcel-ის წაღებას → სენდერი
+// მძღოლი ითხოვს კონკრეტული parcel-ის წაღებას → სენდერი
 // ეთანხმება/არ ეთანხმება → მიწოდების პროცესი → ორმხრივი დადასტურება.
 
 const PickupOfferSchema = new mongoose.Schema({
@@ -265,6 +265,16 @@ const PickupOfferSchema = new mongoose.Schema({
     default: false
   },
 
+  // ⭐ ვინ უკვე შეაფასა მეორე მხარე ამ შეთავაზებაზე
+  reviewedBySender: {
+    type: Boolean,
+    default: false
+  },
+  reviewedByDriver: {
+    type: Boolean,
+    default: false
+  },
+
   createdAt: {
     type: Date,
     default: Date.now,
@@ -286,7 +296,7 @@ const PickupOfferSchema = new mongoose.Schema({
 // ============================================
 // TRIP PICKUP REQUEST MODEL - გამგზავნის მოთხოვნა კონკრეტულ მგზავრობაზე
 // ============================================
-// ✅ NEW: გამგზავნი ხედავს მძღოლის უკვე გამოქვეყნებულ ტრიპს (trip-detail
+// გამგზავნი ხედავს მძღოლის უკვე გამოქვეყნებულ ტრიპს (trip-detail
 // გვერდი) და ითხოვს იმ კონკრეტულ ტრიპზე თავისი ნივთის გაგზავნას.
 // ეს არის PickupOffer-ის საწინააღმდეგო მიმართულება: იქ მძღოლი ითხოვს
 // კონკრეტული parcel-ის წაღებას, აქ კი გამგზავნი ითხოვს კონკრეტულ trip-ზე ჩატვირთვას.
@@ -338,6 +348,53 @@ const TripPickupRequestSchema = new mongoose.Schema({
 });
 
 // ============================================
+// REVIEW MODEL - შეფასება (გამგზავნი ↔ მძღოლი)
+// ============================================
+
+const ReviewSchema = new mongoose.Schema({
+  offerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'PickupOffer',
+    required: true,
+    index: true
+  },
+  reviewerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  targetId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  targetRole: {
+    type: String,
+    enum: ['driver', 'sender'],
+    required: true
+  },
+  rating: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 5
+  },
+  comment: {
+    type: String,
+    default: '',
+    maxlength: 500
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  collection: 'reviews',
+  timestamps: false
+});
+
+// ============================================
 // INDEXES (Performance Optimization)
 // ============================================
 
@@ -369,6 +426,9 @@ TripPickupRequestSchema.index(
   { unique: true, partialFilterExpression: { status: 'pending' } }
 );
 
+// ⭐ ერთმა ადამიანმა ერთ შეთავაზებაზე მხოლოდ ერთხელ შეაფასოს
+ReviewSchema.index({ offerId: 1, reviewerId: 1 }, { unique: true });
+
 // ============================================
 // EXPORTS
 // ============================================
@@ -377,5 +437,6 @@ module.exports = {
   Parcel: mongoose.model('Parcel', ParcelSchema),
   DriverTrip: mongoose.model('DriverTrip', DriverTripSchema),
   PickupOffer: mongoose.model('PickupOffer', PickupOfferSchema),
-  TripPickupRequest: mongoose.model('TripPickupRequest', TripPickupRequestSchema) // ✅ NEW
+  TripPickupRequest: mongoose.model('TripPickupRequest', TripPickupRequestSchema),
+  Review: mongoose.model('Review', ReviewSchema) // ✅ NEW
 };

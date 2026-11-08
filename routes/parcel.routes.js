@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const parcelController = require('../controllers/parcel.controller');
+const reviewController = require('../controllers/review.controller'); // ⭐ რეიტინგი
 const authMiddleware = require('../middleware/auth.middleware');
 const { imageUpload } = require('../middleware/upload.middleware');
 
@@ -60,6 +61,7 @@ router.get('/pickup-offers/:offerId', authMiddleware, parcelController.getOfferD
 router.put('/pickup-offers/:offerId/respond', authMiddleware, parcelController.respondToOffer);
 router.put('/pickup-offers/:offerId/complete-by-driver', authMiddleware, parcelController.markPickupCompleteByDriver);
 router.put('/pickup-offers/:offerId/complete-by-sender', authMiddleware, parcelController.confirmPickupCompleteBySender);
+router.post('/pickup-offers/:offerId/review', authMiddleware, reviewController.submitOfferReview); // ⭐ რეიტინგი
 router.delete('/pickup-offers/:offerId', authMiddleware, parcelController.deletePickupOffer);
 
 router.post('/:parcelId/pickup-offer', authMiddleware, parcelController.requestPickup);

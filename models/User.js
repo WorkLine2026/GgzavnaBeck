@@ -19,17 +19,21 @@ const userSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true, index: true },
   password: { type: String, required: true },
 
-  // ✅ NEW: 'admin' დამატებულია. register() endpoint მაინც არ უშვებს
+  // ✅ 'admin' დამატებულია. register() endpoint მაინც არ უშვებს
   // 'admin'-ის შექმნას (იხ. auth.controller.js) — admin მხოლოდ
   // scripts/createAdmin.js-ით ან სხვა admin-ის მიერ იქმნება.
   role: { type: String, enum: ['sender', 'driver', 'admin'], default: 'sender' },
 
-  // ✅ NEW: admin-ს user-ის დაბლოკვა/გააქტიურება რომ შეეძლოს
+  // ✅ admin-ს user-ის დაბლოკვა/გააქტიურება რომ შეეძლოს
   isBanned: { type: Boolean, default: false },
   bannedReason: { type: String, default: '' },
 
   phoneVerified: { type: Boolean, default: false },
   smsVerification: { type: smsVerificationSchema, default: undefined },
+
+  // ⭐ რეიტინგი (ივსება review-ების გაგზავნისას)
+  ratingAvg: { type: Number, default: 0 },
+  ratingCount: { type: Number, default: 0 },
 
   // ⬇️ მძღოლის ველები ⬇️
   carModel: { type: String },
