@@ -5,6 +5,7 @@ const { Parcel, DriverTrip } = models;
 // შეამოწმე, რომ models/PickupOffer.js და models/TripPickupRequest.js არსებობს
 const PickupOffer = models.PickupOffer || require('../models/PickupOffer');
 const TripPickupRequest = models.TripPickupRequest || require('../models/TripPickupRequest');
+const { archiveUser } = require('../services/userArchive.service');
 
 /* ============================================================
    HELPERS
@@ -269,11 +270,18 @@ exports.deleteUser = async (req, res) => {
       return res.status(400).json({ success: false, message: 'საკუთარი ანგარიშის წაშლა არ შეიძლება' });
     }
 
-    const user = await User.findByIdAndDelete(req.params.userId);
+    const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'მომხმარებელი ვერ მოიძებნა' });
     }
     const userId = user._id;
+
+    // 0) ჯერ არქივში ვინახავთ — თუ აქ ჩავარდა, არაფერი იშლება
+    await archiveUser(user, {
+      deletedBy: 'admin',
+      deletedById: req.userId,
+      reason: req.body && req.body.reason
+    });
 
     // 1) ამ user-ის განცხადებები, რომლებიც სხვის trip-ზეა მიღებული — trip-ს ვუბრუნებთ ადგილს
     const ownParcels = await Parcel.find({ senderId: userId, acceptedTrip: { $ne: null } });
@@ -301,6 +309,9 @@ exports.deleteUser = async (req, res) => {
       PickupOffer.deleteMany({ $or: [{ driverId: userId }, { senderId: userId }] }),
       TripPickupRequest.deleteMany({ $or: [{ driverId: userId }, { senderId: userId }] })
     ]);
+
+    // 4) ბოლოს — თვითონ User
+    await User.findByIdAndDelete(userId);
 
     res.json({ success: true, message: 'მომხმარებელი და მისი მონაცემები წარმატებით წაიშალა' });
   } catch (error) {

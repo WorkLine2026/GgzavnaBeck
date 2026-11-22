@@ -24,6 +24,9 @@ const userSchema = new mongoose.Schema({
   // scripts/createAdmin.js-ით ან სხვა admin-ის მიერ იქმნება.
   role: { type: String, enum: ['sender', 'driver', 'admin'], default: 'sender' },
 
+  // ✅ ადმინ-პანელის ცალკე პაროლი (მხოლოდ /api/admin/login იყენებს)
+  adminPasswordHash: { type: String, select: false },
+
   // ✅ admin-ს user-ის დაბლოკვა/გააქტიურება რომ შეეძლოს
   isBanned: { type: Boolean, default: false },
   bannedReason: { type: String, default: '' },
@@ -50,6 +53,7 @@ userSchema.methods.comparePassword = async function(password) {
 userSchema.methods.toPublic = function () {
   const obj = this.toObject();
   delete obj.password;
+  delete obj.adminPasswordHash;
   return obj;
 };
 

@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cloudinary = require('../config/cloudinary');
 const { Parcel, DriverTrip, PickupOffer } = require('../models');
+const { archiveUser } = require('../services/userArchive.service');
 /**
  * დამხმარე ფუნქცია: ნომრიდან 995 პრეფიქსის მოცილება
  */
@@ -687,6 +688,13 @@ exports.deleteAccount = async (req, res) => {
         message: 'მომხმარებელი ვერ მოიძებნა'
       });
     }
+
+    // 0️⃣ ჯერ არქივში ვინახავთ — თუ აქ ჩავარდა, არაფერი იშლება
+    await archiveUser(user, {
+      deletedBy: 'self',
+      deletedById: user._id,
+      reason: req.body && req.body.reason
+    });
 
     // 1️⃣ ამ მომხმარებლის საკუთარი განცხადებები (როგორც sender)
     const ownParcels = await Parcel.find({ senderId: userId }).select('_id').lean();
